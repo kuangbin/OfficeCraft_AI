@@ -5,12 +5,14 @@ import { useSpaceStore } from '@/stores/spaceStore';
 import { useUserStore } from '@/stores/userStore';
 import { useMissionStore } from '@/stores/missionStore';
 import { useCommunityStore } from '@/stores/communityStore';
+import { useSkillStore } from '@/stores/skillStore';
 import { api, streamChat, SpatialRagChunk } from '@/services/apiClient';
-import { careerService, missionService } from '@/services';
+import { careerService, missionService, skillService } from '@/services';
 import { PixelBadge, PixelButton, PixelCard } from '@/components/pixel';
 import { audioManager } from '@/utils/audioManager';
 import CareerWorldMap, { CareerMapIsland } from '@/components/lobby/CareerWorldMap';
 import CareerPreviewPanel from '@/components/lobby/CareerPreviewPanel';
+import { CareerSkillTree } from '@/components/career';
 import { CareerIsland, Mission, MissionStatus } from '@/types';
 
 // Map area labels
@@ -73,6 +75,13 @@ const BOOKCASES = {
   },
 };
 
+const SKILL_TERMINAL = {
+  id: 'skill_terminal',
+  name: '🖥️ 核心技能星图终端 (Skill Matrix Server)',
+  coords: { x: 18, y: 15 },
+  desc: '连接至高维职业技能星图的量子终端。',
+};
+
 const MILESTONES = [
   { id: 'm1', name: '新手起航', subtitle: '选择并进入你的第一个职业岛屿', achieved: true, xpAwarded: 20 },
   { id: 'm2', name: '快速交付', subtitle: '运行单元测试并成功通过代码编译', achieved: false, xpAwarded: 30 },
@@ -102,13 +111,14 @@ export default function SpaceBoard() {
 
   const { currentCareerId, totalXp, selectCareer, addXp } = useUserStore();
   const { getMissionStatus, acceptMission, completeMission, submitMission } = useMissionStore();
+  const { skills, setSkills } = useSkillStore();
 
   // Internal states
   const lastMoveTimeRef = useRef<number>(0);
   const [activeZone, setActiveZone] = useState<string>('Lobby');
 
-  // Unified overlay screen state: lobby | quests | portfolio | community | sandbox | null
-  const [activeOverlay, setActiveOverlay] = useState<'lobby' | 'quests' | 'portfolio' | 'community' | 'sandbox' | null>(null);
+  // Unified overlay screen state: lobby | quests | portfolio | community | sandbox | skills | null
+  const [activeOverlay, setActiveOverlay] = useState<'lobby' | 'quests' | 'portfolio' | 'community' | 'sandbox' | 'skills' | null>(null);
 
   // Screen shake animation trigger state
   const [screenShake, setScreenShake] = useState(false);
@@ -195,6 +205,10 @@ export default function SpaceBoard() {
     );
   }, [playerCoords]);
 
+  const isNearSkillTerminal = useMemo(() => {
+    return Math.abs(playerCoords.x - SKILL_TERMINAL.coords.x) <= 1 && Math.abs(playerCoords.y - SKILL_TERMINAL.coords.y) <= 1;
+  }, [playerCoords]);
+
   // Look up active mission details from missions store
   const activeMissionDetails = useMemo(() => {
     if (!activeMission) return null;
@@ -227,7 +241,7 @@ export default function SpaceBoard() {
     };
   }, [connectWebSocket, disconnectWebSocket, syncFromBackend]);
 
-  // Fetch career-specific quests when career changes
+  // Fetch career-specific quests and skills when career changes
   useEffect(() => {
     if (currentCareerId) {
       setLoadingMissions(true);
@@ -237,8 +251,14 @@ export default function SpaceBoard() {
         })
         .catch(() => undefined)
         .finally(() => setLoadingMissions(false));
+
+      skillService.getSkillsByCareerId(currentCareerId)
+        .then((data) => {
+          setSkills(data);
+        })
+        .catch(() => undefined);
     }
-  }, [currentCareerId]);
+  }, [currentCareerId, setSkills]);
 
   // Track active zone name
   useEffect(() => {
@@ -340,6 +360,10 @@ export default function SpaceBoard() {
             audioManager.playOpen();
             return;
           }
+          if (isNearSkillTerminal) {
+            openOverlay('skills');
+            return;
+          }
           if (interactiveNpcId) {
             const npc = NPC_INFO[interactiveNpcId as keyof typeof NPC_INFO];
             if (npc) {
@@ -360,16 +384,22 @@ export default function SpaceBoard() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [movePlayer, interactiveNpcId, isAdjacentToTable, isNearLobbyDesk, isNearDevWorkstation, isNearArchiveBookshelf, activeChatNpc]);
+  }, [movePlayer, interactiveNpcId, isAdjacentToTable, isNearLobbyDesk, isNearDevWorkstation, isNearArchiveBookshelf, isNearSkillTerminal, activeChatNpc]);
 
-  const openOverlay = (overlayType: 'lobby' | 'quests' | 'portfolio' | 'community' | 'sandbox') => {
+  const openOverlay = (overlayType: 'lobby' | 'quests' | 'portfolio' | 'community' | 'sandbox' | 'skills') => {
     audioManager.playOpen();
     setActiveOverlay(overlayType);
+    if (overlayType === 'skills') {
+      setAmbientTheme('quiet-blue');
+    }
   };
 
   const closeOverlay = () => {
     audioManager.playClose();
     setActiveOverlay(null);
+    if (activeOverlay === 'skills' || ambientTheme === 'quiet-blue') {
+      setAmbientTheme('default');
+    }
   };
 
   const toggleMute = () => {
@@ -761,7 +791,9 @@ export default function SpaceBoard() {
           </div>
           <div className="flex justify-between items-center bg-slate-950/40 p-2.5 border border-slate-800/50">
             <span className="text-[10px] text-slate-500">已点亮能力</span>
-            <span className="text-xs font-bold text-cyan-400">5 个节点</span>
+            <span className="text-xs font-bold text-cyan-400">
+              {skills.length > 0 ? `${skills.filter((s) => s.unlocked).length} / ${skills.length} 个节点` : '0 个节点'}
+            </span>
           </div>
         </div>
 
@@ -850,6 +882,11 @@ export default function SpaceBoard() {
             <span className="text-[9px] text-slate-500 group-hover:text-purple-400">传送 👉</span>
           </button>
 
+          <button onClick={() => openOverlay('skills')} className="w-full py-2.5 px-3 bg-slate-950/60 hover:bg-cyan-950/30 border border-slate-800 hover:border-cyan-600/70 text-left text-xs text-slate-300 flex justify-between items-center transition-all group">
+            <span>🌟 技能星图 (Skill Tree)</span>
+            <span className="text-[9px] text-slate-500 group-hover:text-cyan-400">传送 👉</span>
+          </button>
+
           <button onClick={() => openOverlay('community')} className="w-full py-2.5 px-3 bg-slate-950/60 hover:bg-emerald-950/30 border border-slate-800 hover:border-emerald-600/70 text-left text-xs text-slate-300 flex justify-between items-center transition-all group">
             <span>💬 交流白板 (Community)</span>
             <span className="text-[9px] text-slate-500 group-hover:text-emerald-400">传送 👉</span>
@@ -875,11 +912,14 @@ export default function SpaceBoard() {
             {isNearArchiveBookshelf && (
               <div className="text-emerald-300 font-bold animate-pulse">✓ 靠近物理资料库，按 [Enter] 开始 RAG 语义。</div>
             )}
+            {isNearSkillTerminal && (
+              <div className="text-cyan-300 font-bold animate-pulse">✓ 靠近技能星图终端，按 [Enter] 量子访问！</div>
+            )}
             {isAdjacentToTable && (
               <div className="text-indigo-300 font-bold animate-pulse">✓ 靠近会议圆桌，按 [Enter] 开始多智能体晨会！</div>
             )}
-            {!isNearLobbyDesk && !isNearDevWorkstation && !isNearArchiveBookshelf && !isAdjacentToTable && (
-              <div className="text-slate-500 italic">移动你的角色靠近前台、书架或会议桌会有物理触发！</div>
+            {!isNearLobbyDesk && !isNearDevWorkstation && !isNearArchiveBookshelf && !isNearSkillTerminal && !isAdjacentToTable && (
+              <div className="text-slate-500 italic">移动你的角色靠近前台、书架、星图终端或会议桌会有物理触发！</div>
             )}
           </div>
         </div>
@@ -985,6 +1025,56 @@ export default function SpaceBoard() {
                 </div>
               </div>
             ))}
+
+            {/* Interactive Skill Matrix Server Terminal */}
+            <div
+              onClick={() => openOverlay('skills')}
+              className="absolute w-[32px] h-[32px] pixel-server-rack hover:scale-105 active:scale-95 transition-all duration-100 flex flex-col items-center justify-between p-[2px] cursor-pointer z-20 group"
+              style={{ transform: `translate3d(${SKILL_TERMINAL.coords.x * 32}px, ${SKILL_TERMINAL.coords.y * 32}px, 0)` }}
+            >
+              {/* Floating Proximity Prompt Bubble */}
+              {isNearSkillTerminal && (
+                <div className="absolute bottom-8 flex flex-col items-center animate-bounce z-30">
+                  <div className="bg-slate-900/95 border-2 border-cyan-500 text-[9px] font-bold text-cyan-300 font-mono py-1 px-1.5 rounded whitespace-nowrap shadow-md">
+                    [Space] 技能星图
+                  </div>
+                  <div className="w-1.5 h-1.5 bg-cyan-500 rotate-45 -mt-1 border-r border-b border-cyan-500" />
+                </div>
+              )}
+
+              {/* Pulsing LEDs indicators */}
+              <div className="w-[28px] h-full flex flex-col justify-around py-0.5 pointer-events-none">
+                <div className="h-[2px] w-full bg-slate-950 flex gap-[2px] px-[1px]">
+                  <div className="w-[3px] h-full bg-cyan-400 animate-pulse" />
+                  <div className="w-[3px] h-full bg-cyan-400/50" />
+                  <div className="w-[3px] h-full bg-slate-800" />
+                  <div className="w-[3px] h-full bg-emerald-500 animate-pulse delay-300" />
+                </div>
+                <div className="h-[2px] w-full bg-slate-950 flex gap-[2px] px-[1px]">
+                  <div className="w-[3px] h-full bg-slate-800" />
+                  <div className="w-[3px] h-full bg-cyan-400 animate-pulse delay-100" />
+                  <div className="w-[3px] h-full bg-emerald-500 animate-pulse delay-500" />
+                  <div className="w-[3px] h-full bg-slate-800" />
+                </div>
+                <div className="h-[2px] w-full bg-slate-950 flex gap-[2px] px-[1px]">
+                  <div className="w-[3px] h-full bg-cyan-400 animate-pulse delay-200" />
+                  <div className="w-[3px] h-full bg-slate-800" />
+                  <div className="w-[3px] h-full bg-cyan-400 animate-pulse delay-700" />
+                  <div className="w-[3px] h-full bg-emerald-500 animate-pulse delay-150" />
+                </div>
+                <div className="h-[2px] w-full bg-slate-950 flex gap-[2px] px-[1px]">
+                  <div className="w-[3px] h-full bg-emerald-500 animate-pulse delay-400" />
+                  <div className="w-[3px] h-full bg-cyan-400 animate-pulse" />
+                  <div className="w-[3px] h-full bg-slate-800" />
+                  <div className="w-[3px] h-full bg-slate-800" />
+                </div>
+              </div>
+
+              {/* Hover Tooltip */}
+              <div className="absolute top-8 scale-0 group-hover:scale-100 transition-all bg-slate-900/90 border border-slate-700 text-[9px] text-slate-300 py-0.5 px-2 rounded whitespace-nowrap pointer-events-none z-30">
+                {SKILL_TERMINAL.name}
+              </div>
+            </div>
 
             {/* Conference roundtable */}
             <div
@@ -1379,6 +1469,50 @@ export default function SpaceBoard() {
                 >
                   🚀 交付并提交评审
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 6. SKILL MATRIX OVERLAY (FULL SCREEN GLASSMORPHIC DIALOG) */}
+      {activeOverlay === 'skills' && (
+        <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md flex items-center justify-center z-50 p-4 font-mono select-none animate-fade-in pointer-events-auto">
+          <div className="w-full max-w-5xl h-[85vh] bg-slate-950/90 border-4 border-cyan-500 shadow-[0_0_30px_rgba(6,182,212,0.3)] p-6 relative flex flex-col gap-4 rounded-xl">
+            {/* Header */}
+            <div className="border-b-2 border-cyan-950 pb-3 flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl animate-pulse">🌟</span>
+                <div>
+                  <span className="text-[9px] font-bold text-cyan-400 tracking-wider uppercase">CAREER CONSTELLATION MAINFRAME</span>
+                  <h3 className="pixel-title text-base font-bold text-slate-100">高维职业能力矩阵星图 (Skill Matrix)</h3>
+                </div>
+              </div>
+              <button 
+                onClick={closeOverlay} 
+                className="text-slate-400 hover:text-cyan-400 border border-slate-800 bg-slate-950 hover:border-cyan-500/50 px-3 py-1 text-xs transition-colors duration-200 rounded"
+              >
+                [关闭 Esc]
+              </button>
+            </div>
+
+            {/* Content Area */}
+            <div className="flex-1 overflow-hidden min-h-0 relative rounded-lg bg-slate-950/60 border border-slate-900 shadow-inner">
+              <div className="absolute inset-0 bg-pixel-grid opacity-5 pointer-events-none" />
+              <div className="w-full h-full overflow-y-auto custom-scrollbar p-1">
+                <CareerSkillTree skills={skills} />
+              </div>
+            </div>
+            
+            {/* Legend / Status bar */}
+            <div className="flex justify-between items-center bg-slate-900/50 p-3 border border-slate-800/60 rounded text-[11px] text-slate-400">
+              <div className="flex items-center gap-4">
+                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_6px_rgba(6,182,212,0.5)]" /> 已点亮</span>
+                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-indigo-500/50 border border-indigo-400/40" /> 已解锁(待点亮)</span>
+                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-slate-800 border border-slate-700" /> 未解锁</span>
+              </div>
+              <div className="font-mono text-cyan-300">
+                当前星图进度: {skills.filter(s => s.unlocked).length} / {skills.length} 节点已通电
               </div>
             </div>
           </div>

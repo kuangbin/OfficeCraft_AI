@@ -852,5 +852,20 @@ a {
   animation: console-screen-shake 0.3s ease-in-out infinite;
 }
 
-
-
+/* Sleek cyber mainframe server rack with blinking LEDs */
+.pixel-server-rack {
+  background:
+    /* Server handles or horizontal metal slats */
+    linear-gradient(90deg, #1e293b 2px, transparent 2px) 2px 0 / 28px 100% repeat,
+    /* Horizontal dark server units partitions */
+    linear-gradient(#090d16 3px, transparent 3px) 0 0 / 100% 8px repeating,
+    /* Frame border highlights */
+    linear-gradient(90deg, #334155 3px, transparent 3px) left / 100% 100%,
+    linear-gradient(90deg, transparent calc(100% - 3px), #334155 calc(100% - 3px)) right / 100% 100%,
+    #0f172a;
+  border: 2px solid #020617;
+  box-shadow: 
+    0 0 10px rgba(6, 182, 212, 0.15),
+    inset 0 0 4px rgba(6, 182, 212, 0.25),
+    0 6px 12px rgba(0, 0, 0, 0.5);
+}

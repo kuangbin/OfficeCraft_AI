@@ -104,6 +104,9 @@ function createCollisionMatrix(): number[][] {
     }
   }
 
+  // 9. Mainframe Server Rack / Skill Terminal at (18, 15) [y=15, x=18]
+  matrix[15][18] = 1;
+
   return matrix;
 }
 
