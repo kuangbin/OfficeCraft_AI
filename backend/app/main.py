@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, text
 
-from app.api.v1 import agent, careers, missions, user
+from app.api.v1 import agent, careers, missions, user, space
 from app.core.config import settings
 from app.core.logging_config import build_log_config, setup_logging
 from app.core.paths import generated_dir
@@ -28,29 +28,46 @@ def _self_heal_schema() -> None:
   in any column the ORM declares but the DB lacks. Idempotent.
   """
   inspector = inspect(engine)
-  if "mission_records" not in inspector.get_table_names():
-    return
-  existing = {col["name"] for col in inspector.get_columns("mission_records")}
-  columns = {
-      "mock_data_filename": "VARCHAR",
-      "career_id": "VARCHAR",
-      "role_id": "VARCHAR",
-      "difficulty": "VARCHAR DEFAULT 'medium'",
-      "task_direction": "VARCHAR",
-      "mission_style": "VARCHAR",
-      "reward_xp": "INTEGER DEFAULT 150",
-      "reward_skills_json": "TEXT DEFAULT '[]'",
-      "evaluation_criteria_json": "TEXT DEFAULT '[]'",
-      "display_metadata_json": "TEXT DEFAULT '{}'",
-  }
-  for column_name, column_type in columns.items():
-    if column_name in existing:
-      continue
-    with engine.begin() as conn:
-      conn.execute(text(
-          f"ALTER TABLE mission_records ADD COLUMN {column_name} {column_type}"
-      ))
-    logger.info("schema migration: added mission_records.%s", column_name)
+  
+  # Self-heal mission_records
+  if "mission_records" in inspector.get_table_names():
+    existing = {col["name"] for col in inspector.get_columns("mission_records")}
+    columns = {
+        "mock_data_filename": "VARCHAR",
+        "career_id": "VARCHAR",
+        "role_id": "VARCHAR",
+        "difficulty": "VARCHAR DEFAULT 'medium'",
+        "task_direction": "VARCHAR",
+        "mission_style": "VARCHAR",
+        "reward_xp": "INTEGER DEFAULT 150",
+        "reward_skills_json": "TEXT DEFAULT '[]'",
+        "evaluation_criteria_json": "TEXT DEFAULT '[]'",
+        "display_metadata_json": "TEXT DEFAULT '{}'",
+    }
+    for column_name, column_type in columns.items():
+      if column_name in existing:
+        continue
+      with engine.begin() as conn:
+        conn.execute(text(
+            f"ALTER TABLE mission_records ADD COLUMN {column_name} {column_type}"
+        ))
+      logger.info("schema migration: added mission_records.%s", column_name)
+
+  # Self-heal users
+  if "users" in inspector.get_table_names():
+    users_existing = {col["name"] for col in inspector.get_columns("users")}
+    users_columns = {
+        "coord_x": "INTEGER DEFAULT 0",
+        "coord_y": "INTEGER DEFAULT 0",
+    }
+    for column_name, column_type in users_columns.items():
+      if column_name in users_existing:
+        continue
+      with engine.begin() as conn:
+        conn.execute(text(
+            f"ALTER TABLE users ADD COLUMN {column_name} {column_type}"
+        ))
+      logger.info("schema migration: added users.%s", column_name)
 
 
 @asynccontextmanager
@@ -103,6 +120,11 @@ app.include_router(
     agent.router,
     prefix="/api/v1/agent",
     tags=["Character Roleplay"],
+)
+app.include_router(
+    space.router,
+    prefix="/api/v1/space",
+    tags=["Spatial State & Navigation"],
 )
 
 

@@ -52,8 +52,13 @@ class TestMissionSpecSubagent(unittest.TestCase):
         "task": {
             "title": "T",
             "description": "D",
-            "mock_data_url": "https://example.com/x.csv",
+            "business_background": "B",
+            "objectives": ["O"],
             "delivery_requirements": ["a", "b"],
+            "evaluation_criteria": ["E"],
+            "recommended_skills": ["S"],
+            "recommended_resources": ["R"],
+            "estimated_time": "1h",
         }
     }
     fake = AsyncMock(chat_json=AsyncMock(return_value=nested))

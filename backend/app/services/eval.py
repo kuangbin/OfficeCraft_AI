@@ -1,5 +1,7 @@
 import json
 import logging
+import uuid
+from datetime import datetime
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from app.services.agents.base import EvaluationContext
@@ -10,6 +12,7 @@ from app.models.schemas import (
     SubmissionEvaluateRequest,
     SubmissionEvaluateResponse,
 )
+from app.services.agents.llm_io import call_llm, llm_disabled
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +75,10 @@ async def evaluate_user_submission(
   active_mission.feedback = response.feedback
   active_mission.experience_gains_json = json.dumps(validated_gains)
 
-  if response.trigger_feynman_challenge:
+  if response.status == "fail":
+    active_mission.status = "failed"
+    active_mission.feynman_active = False
+  elif response.trigger_feynman_challenge:
     active_mission.feynman_active = True
     active_mission.feynman_question = response.feynman_question
   else:
@@ -99,6 +105,77 @@ async def evaluate_user_submission(
       db.add(skill_prog)
     else:
       skill_prog.experience += amount
+
+  # Step 4.1: Emotional Memory Serialization
+  sentiment_tag = "positive" if response.status == "success" else "negative"
+  summary_text = ""
+  if llm_disabled():
+    if sentiment_tag == "positive":
+      summary_text = f"玩家成功完成了任务：{active_mission.title}，展现了优秀的专业技术。"
+    else:
+      summary_text = f"玩家在任务：{active_mission.title} 提交的内容存在一些技术缺陷或测试用例不全，我曾在评审中督促他进行改正。"
+  else:
+    prompt = (
+        f"请将以下技术/数据评审反馈，提炼为一句简短的、以导师或技术主管第一人称视角的长效记忆文本。\n"
+        f"该文本将用于在未来的对话中让导师记住玩家的历史表现。\n"
+        f"评审反馈内容：\n"
+        f"\"\"\"\n{response.feedback}\n\"\"\"\n\n"
+        f"要求：\n"
+        f"1. 必须是第一人称，符合导师或技术主管口吻（例如：'玩家曾提交过...' 或 '玩家展示了...'）。\n"
+        f"2. 如果有代码缺陷、技术失误（如 SettingWithCopyWarning 或未做空值处理），请具体指出，并提醒自己在后续对话中督促其改正。\n"
+        f"3. 限制在150字以内，语言精练，直接输出这段文本，不需要任何多余的前缀或包裹。"
+    )
+    try:
+      raw_summary = await call_llm(prompt=prompt)
+      summary_text = raw_summary.strip().strip('"').strip("'")
+    except Exception as e:
+      logger.warning("Failed to generate memory summary using LLM: %s", e)
+      if sentiment_tag == "positive":
+        summary_text = f"玩家成功完成了任务：{active_mission.title}，展现了优秀的专业技术。"
+      else:
+        summary_text = f"玩家在任务：{active_mission.title} 提交的内容存在一些技术缺陷，需要进行指导。"
+
+  # Extract first skill_id to link, if available
+  link_skill_id = next(iter(validated_gains.keys())) if validated_gains else None
+
+  memory_record = models.UserEmotionalMemory(
+      id=str(uuid.uuid4()),
+      user_id=user_id,
+      skill_id=link_skill_id,
+      sentiment_tag=sentiment_tag,
+      summary_text=summary_text,
+      created_at=datetime.utcnow()
+  )
+  db.add(memory_record)
+  logger.info("Successfully serialized user emotional memory: %s", memory_record.id)
+
+  # Step 4.4: Failed evaluation activates active conflict state
+  if response.status == "fail":
+    existing_conflict = (
+        db.query(models.TeamMeetingLog)
+        .filter_by(user_id=user_id, status="active")
+        .first()
+    )
+    if not existing_conflict:
+      initial_dialogue = [
+          {
+              "speaker": "pm_amy",
+              "text": f"高工，听说我们这次关于「{active_mission.title}」的紧急迭代评审不通过！市场部催得这么急，我们到底什么时候能把代码弄好上线？我不管，这周五必须发版！"
+          },
+          {
+              "speaker": "mentor_ling",
+              "text": f"Amy，急躁解决不了任何问题！这次评审不通过正是因为代码里面有严重的质量缺陷（或是未做核心异常处理/没有单元测试复现）。如果强行上线，那就是在生产环境上埋雷！我们需要玩家给我们进行斡旋，重构和解决这个困局！"
+          }
+      ]
+      conflict_record = models.TeamMeetingLog(
+          id=str(uuid.uuid4()),
+          user_id=user_id,
+          mission_id=request.mission_id,
+          dialogue_history_json=json.dumps(initial_dialogue),
+          status="active"
+      )
+      db.add(conflict_record)
+      logger.info("Created active conflict record for failed evaluation: %s", conflict_record.id)
 
   db.commit()
   return response.model_copy(update={

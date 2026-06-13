@@ -1,224 +1,134 @@
-# 🧠 CareerCraft - AI 驱动的职业模拟沙盒
+# 🗺️ OfficeCraft AI - 2D 像素数字孪生办公室与空间交互沙盒
 
-赛道：D - Social Good  
-核心模型：Gemma 4，本地推荐通过 Ollama / OpenAI-compatible API 调用 `gemma4:26b`。  
-项目定位：面向学生、转行者和资源有限的职业探索人群，用 AI 生成真实工作任务、提供学习资源、评审作品并沉淀技能成长路径。
+**赛道**：赛道三 - 数字孪生与沉浸交互 (Track Three: Digital Twin & Immersive Interaction)  
+**核心模型**：Gemma 4，本地推荐通过 Ollama / OpenAI-compatible API 调用 `gemma4:26b`，亦支持 Gemini 与云端各厂商模型。  
+**项目定位**：面向技术学习者、转行者和极客人群，将传统的“网页任务面板”重构为一张**可操控走动、可物理交互、有空间记忆的 2D 像素虚拟办公室数字孪生沙盒**（星露谷物语 / Gather.town 风格）。
 
-> 这不是一个题库，而是一个"职场模拟器"。
-> 用户在游戏化任务中完成真实职业交付，接受 AI"主管 / 同事 / 客户"的结构化反馈，逐步点亮技能树。
+> 这不是一个普通的题库，而是一个带有物理空间实体和环境感知反馈的**“数字孪生职场模拟器”**。
+> 用户通过键盘 `W-A-S-D` 操控像素角色穿梭在办公室地图中，去技术主管工位领任务，去物理资料库点击特定书架触发 RAG 语义检索。当任务失败时，技术主管的工位会爆发刺眼的红色警报光效。
 
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/Status-MVP-orange)](#快速开始)
+---
 
-## 🎬 演示材料
+## 🎬 演示材料与物理坐标图
 
-- 🎥 演示视频：[演示视频.mp4](演示视频.mp4)
-- 🖼️ 前端截图：[ui/](ui/)
-- 🛠️ 后端说明：[backend/README.md](backend/README.md)
-- 📐 产品与系统规格：[docs/specification/](docs/specification/)
-
-## ✨ 项目简介
-
-CareerCraft 是一个职业学习与就业准备方向的 Social Good 项目。传统学习产品常把知识拆成课程或题库，但真实职场更看重问题拆解、资料检索、交付质量、沟通表达和复盘能力。CareerCraft 将这些能力包装成可玩的职业任务：
-
-1. 🎯 用户选择职业方向，例如数据分析师或软件工程师。
-2. 🧑‍💼 AI 主管生成贴近真实工作的任务背景、数据物料和交付要求。
-3. 📚 用户可以检索内置 Markdown 知识库，获得 Pandas、Matplotlib、工程实践等学习支援。
-4. 📝 用户提交报告或方案后，AI 同事从拆解、准确性、可行性等维度给出评分。
-5. 🌱 系统把反馈结算为经验值和技能树进度，并触发费曼挑战检查真实理解。
-
-## 🌍 为什么属于 Social Good
-
-CareerCraft 希望降低职业探索与技能训练的门槛，尤其帮助缺少实习机会、导师资源或项目经验的学习者。
-
-- 🌱 **更低成本的职业试错**：用户可以在安全环境中体验真实岗位任务，而不需要先获得实习或商业项目机会。
-- ⚖️ **面向能力而非学历标签**：系统关注作品交付、思考过程和技能成长，帮助用户看到可改进的具体路径。
-- 🔍 **可解释反馈**：AI 不只给分，还说明评分原因、下一步学习资源和可操作改进建议。
-- 🧩 **本地优先与可离线演示**：默认支持 mock/fallback 模式，无 API Key 也能体验核心流程；配置 Gemma 4 后可切换真实 LLM。
-
-## 🤖 Gemma 4 如何参与
-
-CareerCraft 使用 Gemma 4 作为职业任务与评审的推理引擎，而不是简单聊天入口。
+- 📐 详细设计与技术规格：[docs/specification/](docs/specification/)
+- 🐍 异步后端核心代码：[backend/](backend/)
+- 💻 前端像素空间源码：[frontend_new/](frontend_new/)
 
 ```text
-用户职业目标
-  -> 任务生成 Agent：生成任务背景、目标、交付物和评分标准
-  -> 物料生成 Agent：生成 CSV / 文本等任务素材
-  -> RAG 检索：从本地 Markdown 知识库召回学习资源
-  -> 评审 Agent：基于任务、物料和用户提交内容输出结构化反馈
-  -> 费曼挑战 Agent：追问关键概念，检查用户是否真正理解
-  -> 技能树 / XP：沉淀成长记录
++-------------------------------------------------------------+
+|                     OfficeCraft AI 空间视图                 |
+|                                                             |
+|   [研发区]                [会议室]            [资料库/RAG]   |
+|   +-----------+          +-----------+        +-----------+ |
+|   | 🧑‍💻 (用户)  |  -WASD-> | 🧑‍💼 PM Amy |        | 📚 概念书架| |
+|   |           |          | 👨‍💼 主管高凌|        | 📖 最佳实践| |
+|   +-----------+          +-----------+        +-----------+ |
+|        |                                                    |
+|        +--- 触发任务/协作 ---> 发生“Prompt-to-Light”环境光效 |
++-------------------------------------------------------------+
 ```
 
-当前后端提供统一 `LLMClient` 抽象，可接入 Gemini、OpenAI-compatible、Anthropic 或 Ollama。Hackathon 本地演示推荐：
+---
 
-```text
-LLM_PROVIDER=openai
-LLM_BASE_URL=http://host.docker.internal:11434/v1
-LLM_API_KEY=ollama
-LLM_MODEL=gemma4:26b
-MOCK_AGENT_OUTPUT=false
-```
+## ✨ 核心特性
 
-如果只想快速查看 UI 和业务闭环，可以保留默认 `MOCK_AGENT_OUTPUT=true`，系统会使用本地 fallback，不发起外部 LLM 请求。
+1. **2D 像素空间探索与 RPG 交互 (RPG Navigation)**  
+   - 支持键盘 `W-A-S-D` / 键盘方向键控制位移。25×25 像素网格地图具有严格碰撞拦截，靠近 NPC / 物理书架 1 格范围内头顶弹出 `[Space] Talk` 提示。
+2. **空间环境光效感知体系 ("Prompt-to-Light")**  
+   - 将无形的业务状态外化为物理感官。当任务失败/编译崩溃时全域泛起**深红报警呼吸滤镜 (Alert Red)**；研发与静默自习时泛起**静谧蓝微光 (Quiet Blue)**；通关技能点亮时全域洒下**金黄欢庆光晕 (Celebrate Gold)** 并同步播放 8-bit 复古电子音效。
+3. **空间 NPC 交互与长效情感记忆 (Interactive NPCs & Memory)**  
+   - 技术主管**高凌 (Tech Lead)** 严厉且代码质量至上，数据专家**郑莹 (Senior Analyst)** 循循善诱，产品经理 **Amy** 业务驱动。
+   - 导师具备长效记忆。每次对话时前置检索 SQLite 情感记忆表（高光或卡壳记录），并在开场白、任务分发中自然引用前序事件，打造具有情感温度的数字孪生团队。
+4. **场景物理化 RAG 资料检索 (Spatial RAG Bookcase)**  
+   - 玩家可移步至[资料库]的特定“实体书架”（如 Pandas 书架、软件设计原则书架）。点击书架触发 RAG 语义检索，向量召回被物理限制在当前书架对应的物理 Markdown 文件集，彻底打通空间坐标与知识上下文。
+5. **多智能体晨会与冲突斡旋 (Multi-Agent Team Standup)**  
+   - 接取任务需物理走到会议室圆桌。后端 `TeamMeetingOrchestrator` 以流式队列形式拉起晨会，PM Amy 与 TL 高凌会就产品上线速度与架构性能展开激烈的唇枪舌战，由用户作为中立方进行斡旋调解评分。
 
-## 🚀 核心特性
-
-- **多角色 Agent**：LLM 扮演"主管 / 同事 / 客户"，动态出题并给出结构化评审。
-- **真实任务物料**：任务生成时可产出可下载数据文件或业务材料，评审时可回读物料上下文。
-- **游戏化成长**：完成任务积累经验值，点亮可视化技能树。
-- **RAG 学习支援**：卡壳时一键检索内置 Markdown 知识库。
-- **费曼挑战**：AI 随机追问，帮助用户确认是否真正理解关键概念。
-- **LLM 审计日志**：开发模式下记录 LLM 请求/响应 JSONL，方便排查与复盘。
-
-## 🎮 MVP 演示流程
-
-1. 🏔️ 进入"数据山脉"，成为初级数据分析师。
-2. 📌 主管 Agent 发布任务："分析社区论坛活跃度下降原因"。
-3. 🔎 点击"寻找资源"，RAG 推荐 Pandas / Matplotlib 等教程。
-4. 📄 下载任务物料并提交分析报告。
-5. 🧑‍⚖️ 同事 Agent 从问题拆解、数据准确性、建议可行性等维度评分。
-6. ⭐ 获得类似 `{"skill_data_cleaning": +10, "skill_communication": +8}` 的成长结算，并点亮技能节点。
-7. 💡 触发费曼挑战，用自己的话解释关键方法。
-
-## 🖼️ 界面预览
-
-### 🏠 首页
-
-![CareerCraft 首页](ui/homepage.png)
-
-### 🧭 AI 任务生成
-
-![AI 任务生成](ui/AI-mission.png)
-
-![AI 任务详情](ui/AI-mission2.png)
-
-### 🧾 AI 评审反馈
-
-![AI 评审反馈](ui/AI-review.png)
+---
 
 ## 🏗️ 系统架构
 
 ```text
-Next.js 前端
-  -> FastAPI API
-  -> Mission / Evaluation / Feynman Orchestrators
-  -> Gemma 4 或本地 fallback
-  -> SQLite 用户进度
-  -> ChromaDB + Markdown 知识库
-  -> 技能树 / 任务物料 / 评审反馈
+Next.js 14 前端 (React)
+  -> useSpaceStore (Zustand 物理状态机 & translate3d 硬件加速渲染)
+  -> FastAPI API (Python 异步路由)
+  -> TeamMeetingOrchestrator (多角色晨会编排 / 空间碰撞拦截 / 情感记忆注入)
+  -> Gemma 4 / Gemini 或本地离线 fallback 模式
+  -> SQLite (空间格点坐标 + 情感记忆日志 + 会议历史记录)
+  -> ChromaDB + 实体书架局部 Markdown 知识库 (Spatial RAG)
 ```
 
 主要技术栈：
 
 | 模块 | 技术 |
 |---|---|
-| 前端 | Next.js 14, React, TypeScript, Tailwind CSS, Zustand |
-| 后端 | FastAPI, SQLAlchemy, SQLite |
-| RAG | ChromaDB + 本地 Markdown 知识库 |
-| LLM 接入 | 统一 LLMClient，支持 Gemma 4 / Gemini / OpenAI-compatible / Anthropic / Ollama |
-| 部署 | Docker Compose |
+| **前端** | Next.js 14 (React), Zustand, Tailwind CSS, TypeScript, Web Audio |
+| **后端** | FastAPI, SQLAlchemy, SQLite, Pydantic v2 |
+| **向量库 (RAG)** | ChromaDB + 确定性 MD5 Hashing 嵌入 + 词频加权 (Hybrid Seek) |
+| **大模型接入** | 统一 LLMClient 抽象，支持 Gemma 4 / Gemini / OpenAI-compatible / Anthropic / Ollama |
 
-## 📁 仓库结构
+---
+
+## 📂 仓库结构
 
 ```text
-Careercraft/
+officecraft_ai/
 ├── backend/        # FastAPI + SQLite + ChromaDB，见 backend/README.md
-├── frontend_new/   # Next.js 前端，Docker 默认构建此目录
-├── docs/           # 产品规格、角色设定、技能树、知识库 Markdown
-├── ui/             # README 截图素材
-├── .env.example    # 根目录环境变量模板，供 docker-compose.yml 使用
+├── frontend_new/   # Next.js 像素空间前端，Docker 默认构建此目录
+├── docs/           # 产品与系统规格、角色设定、技能树、知识库 Markdown
+│   ├── specification/     # 愿景、设计、API规格、ADR 决策
+│   └── knowledge_base/    # 实体书架绑定 RAG 物理文档
+├── ui/             # README 截图与展示素材
 └── docker-compose.yml
 ```
 
+---
+
 ## 🚀 快速开始
 
-### 🐳 方式一：推荐，用 Docker Compose 启动整套服务
+### 🐳 方式一：使用 Docker Compose 启动整套服务
+1. 在仓库根目录复制环境变量模板并命名为 `.env`：
+   ```bash
+   cp .env.example .env
+   ```
+2. 在仓库根目录运行启动命令：
+   ```bash
+   docker compose up --build
+   ```
+3. 启动后浏览器访问：
+   - 前端空间：`http://localhost:3000`
+   - 后端 API：`http://localhost:8003`
 
-1. 在仓库根目录复制环境变量模板：
+### 💻 方式二：本地开发分别启动
 
+#### 1. 后端服务 (FastAPI)
 ```bash
-cp .env.example .env
-```
-
-2. 根据需要编辑根目录 `.env`。
-
-重要说明：
-
-- `docker compose` 默认读取的是仓库根目录、与 `docker-compose.yml` 同级的 `.env`
-- 不要把实际 Docker 启动配置放在 `backend/.env`
-- 前端构建时会使用 `NEXT_PUBLIC_API_BASE_URL`，默认推荐：`http://localhost:8003`
-- 如果在宿主机运行 Ollama，Docker 内访问宿主机通常使用 `http://host.docker.internal:11434/v1`
-
-3. 在仓库根目录启动：
-
-```bash
-docker compose up --build
-```
-
-启动后访问：
-
-- 前端：`http://localhost:8004`
-- 后端 API：`http://localhost:8003`
-- 后端 OpenAPI：`http://localhost:8003/docs`
-
-### 💻 方式二：本地分别启动前后端
-
-```bash
-# 后端，详细说明见 backend/README.md
 cd backend
 python3 -m venv venv
-source venv/bin/activate   # Windows: .\venv\Scripts\activate
+source venv/bin/activate  -- Windows: .\venv\Scripts\activate
 pip install -r requirements.txt
-python3 -m app.main        # http://127.0.0.1:8000/docs
+python3 -m app.main
+```
 
-# 前端
-cd ../frontend_new
+#### 2. 前端服务 (Next.js)
+```bash
+cd frontend_new
 npm install
 npm run dev
 ```
 
-## ✅ 测试与验证
+---
 
-后端单元测试：
+## 🧪 测试与验证
 
+在后端激活虚拟环境后，于 `backend/` 目录下运行标准库单元测试：
 ```bash
-cd backend
-python3 -m unittest discover -s tests
+./venv/bin/python -m unittest discover -s tests
 ```
 
-前端构建：
+---
 
-```bash
-cd frontend_new
-npm install
-npm run build
-```
+## 📜 许可证 (License)
 
-真实 LLM 测试需要显式配置 `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL`，并关闭 `MOCK_AGENT_OUTPUT`。
-
-## 🔐 隐私与边界
-
-- MVP 默认使用本地 SQLite 与本地 ChromaDB，不接入云端账号体系。
-- 演示任务与知识库材料为模拟职业学习场景，不包含真实个人隐私。
-- 系统提供学习建议和职业能力训练反馈，不承诺就业、升学或商业结果。
-- AI 评审用于训练和复盘，不应作为正式招聘、薪酬、绩效或资质认证的唯一依据。
-- 用户提交内容如包含隐私或商业机密，应在部署前增加数据脱敏、访问控制和日志留存策略。
-
-## 📦 提交说明
-
-项目提交路径：
-
-```text
-submissions/2026/track_D/Careercraft/
-```
-
-PR 标题建议：
-
-```text
-[赛道D] CareerCraft - AI 驱动的职业模拟沙盒
-```
-
-## 📜 License
-
-MIT
+[MIT](LICENSE)

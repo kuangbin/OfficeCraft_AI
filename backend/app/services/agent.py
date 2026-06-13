@@ -129,8 +129,38 @@ def _fetch_active_mission(user_id: str) -> Any | None:
     db.close()
 
 
-def _build_chat_system(role_id: str, active_mission: Any | None) -> str:
+def _build_chat_system(role_id: str, active_mission: Any | None, user_id: str | None = None) -> str:
   system_inst = get_system_prompt(role_id)
+
+  # Inject emotional memory if user_id is provided
+  if user_id:
+    from app.db.session import session_local
+    from app.models import orm as models
+    db = session_local()
+    try:
+      memories = (
+          db.query(models.UserEmotionalMemory)
+          .filter_by(user_id=user_id)
+          .order_by(models.UserEmotionalMemory.created_at.desc())
+          .limit(3)
+          .all()
+      )
+      if memories:
+        memory_lines = []
+        for mem in memories:
+          memory_lines.append(f"[情感反馈上下文] {mem.summary_text}")
+        memory_block = "\n".join(memory_lines)
+        system_inst = (
+            f"{system_inst}\n\n"
+            f"你的长效记忆中，关于该玩家过去的表现和历史反馈上下文如下：\n"
+            f"{memory_block}\n"
+            f"请结合这些记忆上下文，如果存在相关代码缺陷或历史成就，请在对话中以贴合性格的方式督促、询问或鼓励他。"
+        )
+    except Exception as e:
+      logger.warning("Failed to query or inject emotional memories into chat system: %s", e)
+    finally:
+      db.close()
+
   if not active_mission:
     return system_inst
   return (
@@ -160,7 +190,7 @@ async def act_as_role(
 
   response_text = ""
   if not _llm_disabled():
-    system_inst = _build_chat_system(role_id, active_mission)
+    system_inst = _build_chat_system(role_id, active_mission, user_id)
     prompt = (
         f"玩家对你说：“{user_input}”。请结合你的性格、口头禅、背景职责和当前任务背景，"
         f"给出一个有态度、沉浸、极其拟真的简短口头回复（通常不超过80字），不要胡编乱造其他废话。"

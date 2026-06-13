@@ -251,3 +251,90 @@ class ResourceResponse(BaseModel):
   source: str | None = None
   tags: list[str] = Field(default_factory=list)
 
+
+class SpaceCoords(BaseModel):
+  """2D coordinates on the spatial map grid."""
+
+  x: int
+  y: int
+
+
+class SpaceActiveMission(BaseModel):
+  """Summarized view of the user's active mission in space."""
+
+  mission_id: str
+  title: str
+  status: str
+
+
+class SpaceConflict(BaseModel):
+  """Details of an active multi-agent team conflict needing arbitration."""
+
+  conflict_id: str
+  trigger_npc_ids: list[str]
+  description: str
+
+
+class SpaceStateResponse(BaseModel):
+  """Aggregated response for spatial state recovery on login/refresh."""
+
+  player_coords: SpaceCoords
+  ambient_theme: str
+  map_assets_url: str
+  active_mission: SpaceActiveMission | None = None
+  unresolved_conflict: SpaceConflict | None = None
+
+
+class SpaceMoveRequest(BaseModel):
+  """Request payload for updating 2D player coordinates."""
+
+  x: int = Field(..., ge=0, le=24, description="Target X coordinate (0-24)")
+  y: int = Field(..., ge=0, le=24, description="Target Y coordinate (0-24)")
+
+
+class SpaceMoveResponse(BaseModel):
+  """Response payload returning status and nearby interactable NPC trigger."""
+
+  status: str = "success"
+  coords: SpaceCoords
+  triggered_npc_id: str | None = None
+
+
+class SpatialRagSearchRequest(BaseModel):
+  """Request payload for clicking on a bookcase and searching its scope."""
+
+  bookcase_id: str = Field(..., description="Unique bookcase identifier")
+  query: str = Field(..., description="User query text")
+
+
+class SpatialRagChunk(BaseModel):
+  """Single document chunk retrieved by physics-restricted RAG."""
+
+  doc_title: str
+  content_excerpt: str
+  similarity_score: float
+
+
+class SpatialRagSearchResponse(BaseModel):
+  """Response payload for the bookcase-specific RAG search."""
+
+  bookcase_id: str
+  top_k_chunks: list[SpatialRagChunk]
+
+
+class SpaceArbitrateRequest(BaseModel):
+  """Request schema for team conflict arbitration."""
+
+  conflict_id: str
+  choice: Literal["speed", "quality", "balance"]
+
+
+class SpaceArbitrateResponse(BaseModel):
+  """Response schema for team conflict arbitration feedback."""
+
+  status: str = "success"
+  dialogue_history: list[dict[str, Any]]
+  xp_gained: int
+  feedback: str
+
+

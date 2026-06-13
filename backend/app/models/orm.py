@@ -2,8 +2,10 @@
 
 import json
 import logging
+from datetime import datetime
+from typing import Any
 
-from sqlalchemy import Column, Integer, String, Boolean, Text, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Boolean, Text, ForeignKey, UniqueConstraint, DateTime
 from sqlalchemy.orm import relationship
 from app.db.session import base
 
@@ -18,6 +20,8 @@ class User(base):
   id = Column(String, primary_key=True)
   current_career_id = Column(String, nullable=True, default="")
   total_xp = Column(Integer, nullable=False, default=0)
+  coord_x = Column(Integer, nullable=False, default=0)
+  coord_y = Column(Integer, nullable=False, default=0)
 
   # Relationships for cascade deletion and easy joining
   skills = relationship(
@@ -27,6 +31,16 @@ class User(base):
   )
   missions = relationship(
       "MissionRecord",
+      back_populates="user",
+      cascade="all, delete-orphan",
+  )
+  emotional_memories = relationship(
+      "UserEmotionalMemory",
+      back_populates="user",
+      cascade="all, delete-orphan",
+  )
+  meeting_logs = relationship(
+      "TeamMeetingLog",
       back_populates="user",
       cascade="all, delete-orphan",
   )
@@ -218,3 +232,51 @@ class MissionRecord(base):
   def experience_gains(self, val: dict[str, int]) -> None:
     """Encodes experience gains dict to JSON string."""
     self.experience_gains_json = json.dumps(val)
+
+
+class UserEmotionalMemory(base):
+  """Sentiment memory logs linked to user IDs."""
+
+  __tablename__ = "user_emotional_memories"
+
+  id = Column(String, primary_key=True)  # Store UUID string
+  user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+  skill_id = Column(String, nullable=True)
+  sentiment_tag = Column(String, nullable=True)
+  summary_text = Column(Text, nullable=False)
+  created_at = Column(DateTime, nullable=True, default=datetime.utcnow)
+
+  user = relationship("User", back_populates="emotional_memories")
+
+
+class TeamMeetingLog(base):
+  """Dialogue logs of morning standups and conflict arbitrations."""
+
+  __tablename__ = "team_meeting_logs"
+
+  id = Column(String, primary_key=True)  # Store UUID string
+  user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+  mission_id = Column(String, nullable=False)
+  dialogue_history_json = Column(Text, nullable=True, default="[]")
+  status = Column(String, nullable=False, default="active")
+
+  user = relationship("User", back_populates="meeting_logs")
+
+  @property
+  def dialogue_history(self) -> list[dict[str, Any]]:
+    """Decodes dialogue history from JSON string."""
+    if not self.dialogue_history_json:
+      return []
+    try:
+      return json.loads(self.dialogue_history_json)
+    except json.JSONDecodeError:
+      logger.warning(
+          "Malformed dialogue_history_json on meeting log %s: %.120r",
+          self.id, self.dialogue_history_json,
+      )
+      return []
+
+  @dialogue_history.setter
+  def dialogue_history(self, val: list[dict[str, Any]]) -> None:
+    """Encodes dialogue history list to JSON string."""
+    self.dialogue_history_json = json.dumps(val)
