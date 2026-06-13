@@ -165,6 +165,99 @@ npm run dev
 
 ---
 
+## ⚡ 故障演练与应急抢修指南 (Troubleshooting & Recovery Guide)
+
+为了让开发者与测试人员能够完整验证 OfficeCraft AI 的**实时故障注入与协同排修系统**，我们设计了两种高可用环境下的突发灾难演练机制。系统会根据故障类型动态调整全域环境光效与音效（环境光感知体系）。
+
+---
+
+### 🚨 故障一：P0 级核心数据库 100% 满载（红区警报）
+
+* **故障背景**：数据库进程因大量的 N+1 关联查询及未优化的大表 JOIN 发生死锁。连接池耗尽导致物理服务器 CPU 100% 满载、严重过热！
+* **物理光效**：全域瞬间泛起**深红呼吸警报光效 (Alert Red)**，并循环播放高频 8-bit 防空警报音效。
+
+#### 1. 触发方式
+在后端服务运行状态下，你可以通过两种方式注入故障：
+* **方法 A (API 注入)**：使用 HTTP 工具向后端发送注入请求：
+  ```bash
+  curl -X POST http://localhost:8003/api/v1/space/anomaly/trigger \
+       -H "Content-Type: application/json" \
+       -H "Authorization: Bearer mock_token" \
+       -d '{"anomaly_id": "db_cpu_overload"}'
+  ```
+  *(注：如果采用本地单机免密登录模式，请确保 header 中的 Authorization 与你的当前玩家 Token 保持一致)*
+* **方法 B (调试沙盒机制)**：在工位电脑的 Sandbox IDE 故意执行编写失败的死锁代码，也会由于单测崩溃在物理空间中自动触发此报警。
+
+#### 2. 抢修定位
+* 操控角色通过 `WASD` 移动至 **Archive Room (物理档案库/机房)** 区域，具体到坐标 `(18, 15)` 的 **主控机柜 (Skill Matrix Server Rack)** 旁边。
+* 靠近机柜后，屏幕下方 `📡 空间雷达传感器` 将自动探出，头顶弹出 `[Space] 应急控制台` 交互提示。按下 `空格键 (Space)` 或 `回车键 (Enter)` 开启玻璃钢化应急终端。
+
+#### 3. 编写方案并执行修复
+在弹出的红色应急终端中，你需要编写代码来解决死锁。以下提供两种经过验证的修复脚本（可直接复制提交）：
+
+* **方案 A：SQL 索引优化法（优化大表全表扫描）**
+  * *判断规则*：代码必须包含 `create index` 与 `on`（不区分大小写）。
+  * *推荐提交*：
+    ```sql
+    CREATE INDEX idx_user_id ON users(id);
+    ```
+* **方案 B：Python 异常熔断与死锁事务回滚法**
+  * *判断规则*：代码必须包含 `try` 与 `except`（不区分大小写）。
+  * *推荐提交*：
+    ```python
+    try:
+        # 执行高频数据库查询
+        query_database_connection()
+    except Exception as e:
+        # 释放死锁连接，回滚未完成事务
+        db.rollback()
+    ```
+
+点击屏幕右下角的 **`⚡ 运行重构检查`**，审核通过后，全域将响起欢庆音效，环境光恢复正常，系统重置 CPU 负载至 `12%`，并额外授予你 **`+50 XP`** 职业成长经验值！
+
+---
+
+### 🍊 故障二：P1 级分布式微服务 B 熔断器脱扣（橙区警报）
+
+* **故障背景**：微服务 B 底层网关突发心跳超时，导致调用队列严重阻塞，触发分布式熔断器异常脱扣，部分依赖服务陷入级联雪崩。
+* **物理光效**：全域瞬间泛起**炫橘脉冲警报光效 (Alert Orange)**，机房中的实体服务器机柜（Server Rack）LED 开启高频亮橙色爆闪，并伴有机械电闸脱扣的下降锯齿波音效。
+
+#### 1. 触发方式
+* **方法 A (白板战役激活 - 推荐)**：控制角色移动至 Meeting Room `(15, 5)` 的**共享协作白板**，按下 `Space` 打开白板，点击 “战役 (Quests)” 页签，选中“分布式熔断器改造”任务卡片，点击 **`🎯 激活团队战役`** 即可在所有玩家屏幕上同步拉起分布式熔断橙色故障。
+* **方法 B (API 注入)**：使用 HTTP 客户端注入：
+  ```bash
+  curl -X POST http://localhost:8003/api/v1/space/anomaly/trigger \
+       -H "Content-Type: application/json" \
+       -H "Authorization: Bearer mock_token" \
+       -d '{"anomaly_id": "service_breaker_trip"}'
+  ```
+
+#### 2. 抢修定位
+* 移动至机房坐标 `(18, 15)` 的 **主控机柜 (Skill Matrix Server Rack)** 旁边。
+* 按下 `空格键` 或 `回车键` 调出应急终端。此时终端外框、光标会自动切换为炫丽橙色，并多出一组电闸杠杆的可视化组件 and SVG 物理电路图，显示当前熔断器正处于 `OPEN / TRIP`（脱扣断开）状态。
+
+#### 3. 编写方案并执行修复
+你需要在橙色终端中，重构调用中间件并引入高可用熔断控制逻辑。
+* *判断规则*：提交的代码中必须**同时包含** `circuitbreaker` (或 `breaker`)、`fallback`、`open`、`closed` 四个关键英文单词（不区分大小写，可用作注释或代码行）。
+* *推荐提交（可以直接复制）*：
+  ```python
+  # 引入分布式熔断机制（circuitbreaker）保护高可用微服务
+  # 当错误率过高时，熔断器从 CLOSED 状态切换为 OPEN 状态
+  # 并在 OPEN 期间自动调用 fallback 备用降级方法
+  @circuitbreaker(timeout=3, fallback=my_fallback_handler)
+  def call_service_b():
+      # 熔断正常闭合状态为 CLOSED
+      # 发生级联雪崩脱扣状态为 OPEN
+      pass
+  ```
+
+点击屏幕下方的 **`⚡ 运行重构检查`**，通过校验后：
+* 终端电闸拨档将平滑滑动回右侧 `ON / CLOSED`，SVG 物理电路实时刷新为绿色安全的闭合通路！
+* 扬声器中将响起由 Web Audio 纯算法合成的三声上扬 Sine 波电闭合回巢音效，清除全屏橙光。
+* 故障成功被你抢修恢复，并授予最高级别的团队协同大奖 **`+80 XP`** 职业经验值！
+
+---
+
 ## 🧪 测试与验证
 
 在后端激活虚拟环境后，于 `backend/` 目录下运行标准库单元测试：
