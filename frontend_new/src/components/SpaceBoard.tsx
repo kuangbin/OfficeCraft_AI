@@ -1054,15 +1054,15 @@ export default function SpaceBoard() {
             <div className="absolute top-[288px] left-[32px] w-[32px] h-[32px] pixel-toolboxes z-10 pointer-events-none" />
 
             {/* Lobby reception desk */}
-            <div className="absolute top-[96px] left-[96px] w-[160px] h-[32px] pixel-reception-desk flex items-center justify-center font-bold text-[10px] text-amber-200 z-10 border-2 border-amber-950/20 shadow-md">
+            <div className="absolute top-[96px] left-[96px] w-[160px] h-[32px] pixel-reception-desk flex items-center justify-center font-bold text-[9px] tracking-tight whitespace-nowrap text-amber-200 z-10 border-2 border-amber-950/20 shadow-md">
               💼 大厅前台接待处 (Lobby Desk)
             </div>
 
             {/* Dev workstations */}
-            <div className="absolute top-[448px] left-[64px] w-[224px] h-[32px] pixel-dev-desk flex items-center justify-center font-bold text-[10px] text-slate-100 z-10">
+            <div className="absolute top-[448px] left-[64px] w-[224px] h-[32px] pixel-dev-desk flex items-center justify-center font-bold text-[9px] tracking-tight whitespace-nowrap text-slate-100 z-10">
               💻 研发工位 A ( G-5 Code Console)
             </div>
-            <div className="absolute top-[576px] left-[64px] w-[224px] h-[32px] pixel-dev-desk flex items-center justify-center font-bold text-[10px] text-slate-100 z-10">
+            <div className="absolute top-[576px] left-[64px] w-[224px] h-[32px] pixel-dev-desk flex items-center justify-center font-bold text-[9px] tracking-tight whitespace-nowrap text-slate-100 z-10">
               💻 研发工位 B (Pandas Analytics Engine)
             </div>
 
@@ -1072,7 +1072,7 @@ export default function SpaceBoard() {
                 return (
                   <div
                     key={`v-wall-${y}`}
-                    className="absolute w-[32px] h-[32px] pixel-wood-wall z-10"
+                    className="absolute top-0 left-0 w-[32px] h-[32px] pixel-wood-wall z-10"
                     style={{ transform: `translate3d(${12 * 32}px, ${y * 32}px, 0)` }}
                   />
                 );
@@ -1086,7 +1086,7 @@ export default function SpaceBoard() {
                 return (
                   <div
                     key={`h-left-wall-${x}`}
-                    className="absolute w-[32px] h-[32px] pixel-slate-wall z-10"
+                    className="absolute top-0 left-0 w-[32px] h-[32px] pixel-slate-wall z-10"
                     style={{ transform: `translate3d(${x * 32}px, ${10 * 32}px, 0)` }}
                   />
                 );
@@ -1101,7 +1101,7 @@ export default function SpaceBoard() {
                 return (
                   <div
                     key={`h-right-wall-${x}`}
-                    className="absolute w-[32px] h-[32px] pixel-wood-wall z-10"
+                    className="absolute top-0 left-0 w-[32px] h-[32px] pixel-wood-wall z-10"
                     style={{ transform: `translate3d(${x * 32}px, ${12 * 32}px, 0)` }}
                   />
                 );
@@ -1114,7 +1114,7 @@ export default function SpaceBoard() {
               <div
                 key={bookcase.id}
                 onClick={() => openBookcasePanel(bookcase)}
-                className="absolute w-[32px] h-[32px] pixel-bookshelf hover:scale-110 active:scale-95 transition-all duration-100 flex items-center justify-center text-sm cursor-pointer z-20 group"
+                className="absolute top-0 left-0 w-[32px] h-[32px] pixel-bookshelf hover:scale-110 active:scale-95 transition-all duration-100 flex items-center justify-center text-sm cursor-pointer z-20 group"
                 style={{ transform: `translate3d(${bookcase.coords.x * 32}px, ${bookcase.coords.y * 32}px, 0)` }}
                 title="点击查阅物理书架 (RAG)"
               >
@@ -1127,7 +1127,7 @@ export default function SpaceBoard() {
             {/* Interactive Skill Matrix Server Terminal */}
             <div
               onClick={() => openOverlay('skills')}
-              className="absolute w-[32px] h-[32px] pixel-server-rack hover:scale-105 active:scale-95 transition-all duration-100 flex flex-col items-center justify-between p-[2px] cursor-pointer z-20 group"
+              className="absolute top-0 left-0 w-[32px] h-[32px] pixel-server-rack hover:scale-105 active:scale-95 transition-all duration-100 flex flex-col items-center justify-between p-[2px] cursor-pointer z-20 group"
               style={{ transform: `translate3d(${SKILL_TERMINAL.coords.x * 32}px, ${SKILL_TERMINAL.coords.y * 32}px, 0)` }}
             >
               {/* Floating Proximity Prompt Bubble */}
@@ -1195,7 +1195,7 @@ export default function SpaceBoard() {
                 <div
                   key={npc.id}
                   onClick={() => startConversation(npc)}
-                  className="absolute w-[32px] h-[32px] flex items-center justify-center text-xl cursor-pointer z-20 select-none group"
+                  className="absolute top-0 left-0 w-[32px] h-[32px] flex items-center justify-center text-xl cursor-pointer z-20 select-none group"
                   style={{ transform: `translate3d(${coords.x * 32}px, ${coords.y * 32}px, 0)` }}
                 >
                   {/* Character shadow */}
@@ -1219,7 +1219,7 @@ export default function SpaceBoard() {
 
             {/* Player Avatar */}
             <div
-              className="absolute w-[32px] h-[32px] flex items-center justify-center z-30 transition-all duration-100 select-none pointer-events-none"
+              className="absolute top-0 left-0 w-[32px] h-[32px] flex items-center justify-center z-30 transition-all duration-100 select-none pointer-events-none"
               style={{ transform: `translate3d(${playerCoords.x * 32}px, ${playerCoords.y * 32}px, 0)` }}
             >
               {/* Character shadow */}
@@ -1246,7 +1246,7 @@ export default function SpaceBoard() {
               return (
                 <div
                   key={id}
-                  className="absolute w-[32px] h-[32px] flex items-center justify-center z-30 transition-all duration-100 select-none pointer-events-none"
+                  className="absolute top-0 left-0 w-[32px] h-[32px] flex items-center justify-center z-30 transition-all duration-100 select-none pointer-events-none"
                   style={{ transform: `translate3d(${p.x * 32}px, ${p.y * 32}px, 0)` }}
                 >
                   {/* Character shadow */}
