@@ -24,6 +24,10 @@ _SKIP_REASON = "set RUN_LIVE_LLM=1 to enable real network tests"
 class TestLiveLLM(unittest.TestCase):
   """Smoke tests against the LLM provider configured in .env."""
 
+  def setUp(self) -> None:
+    from app.core.llm.factory import reset_llm_client_cache
+    reset_llm_client_cache()
+
   def test_print_active_config(self):
     """Sanity log: shows which provider/model/base_url is being hit."""
     print(
