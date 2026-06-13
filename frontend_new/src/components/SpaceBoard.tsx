@@ -120,6 +120,10 @@ export default function SpaceBoard() {
   // Unified overlay screen state: lobby | quests | portfolio | community | sandbox | skills | null
   const [activeOverlay, setActiveOverlay] = useState<'lobby' | 'quests' | 'portfolio' | 'community' | 'sandbox' | 'skills' | null>(null);
 
+  // Controls collapsible HUD panels
+  const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(false);
+  const [isNavOpen, setIsNavOpen] = useState(false);
+
   // Screen shake animation trigger state
   const [screenShake, setScreenShake] = useState(false);
 
@@ -209,11 +213,34 @@ export default function SpaceBoard() {
     return Math.abs(playerCoords.x - SKILL_TERMINAL.coords.x) <= 1 && Math.abs(playerCoords.y - SKILL_TERMINAL.coords.y) <= 1;
   }, [playerCoords]);
 
+  // Local active mission derived from the frontend store if the backend activeMission is not yet synced or available
+  const localActiveMission = useMemo(() => {
+    if (activeMission) {
+      return {
+        mission_id: activeMission.mission_id,
+        title: activeMission.title,
+        status: activeMission.status,
+      };
+    }
+    // Fallback: find any mission in the current list that is accepted
+    const acceptedMission = missions.find(
+      (m) => getMissionStatus(m.id, m.status) === MissionStatus.ACCEPTED
+    );
+    if (acceptedMission) {
+      return {
+        mission_id: acceptedMission.id,
+        title: acceptedMission.title,
+        status: 'active',
+      };
+    }
+    return null;
+  }, [activeMission, missions, getMissionStatus]);
+
   // Look up active mission details from missions store
   const activeMissionDetails = useMemo(() => {
-    if (!activeMission) return null;
-    return missions.find((m) => m.id === activeMission.mission_id) || null;
-  }, [activeMission, missions]);
+    if (!localActiveMission) return null;
+    return missions.find((m) => m.id === localActiveMission.mission_id) || null;
+  }, [localActiveMission, missions]);
 
   // Sync initial setup
   useEffect(() => {
@@ -660,14 +687,14 @@ export default function SpaceBoard() {
 
   // Submit to AI evaluation
   const handleSandboxSubmit = async () => {
-    if (!activeMission || isCompiling) return;
+    if (!localActiveMission || isCompiling) return;
     setIsCompiling(true);
     try {
       const evaluationMaterial = [sandboxReport.trim(), sandboxCode.trim() ? `\n\nCode materials:\n${sandboxCode.trim()}` : ''].join('');
-      const result = await missionService.evaluateSubmission(activeMission.mission_id, evaluationMaterial);
+      const result = await missionService.evaluateSubmission(localActiveMission.mission_id, evaluationMaterial);
       
       audioManager.playThemeTransition('celebrate-gold');
-      completeMission(activeMission.mission_id);
+      completeMission(localActiveMission.mission_id);
       const gainsXp = Object.values(result.experience_gains || {}).reduce((a, b) => a + b, 0) || 60;
       addXp(gainsXp);
       closeOverlay();
@@ -676,7 +703,7 @@ export default function SpaceBoard() {
       alert(`🎉 恭喜！AI 导师评审通过：\n评分：${gainsXp} XP\n评语：${result.feedback || '非常棒的代码实现与数据分析！'}`);
     } catch {
       // Offline fallback
-      completeMission(activeMission.mission_id);
+      completeMission(localActiveMission.mission_id);
       addXp(60);
       closeOverlay();
       syncFromBackend();
@@ -711,6 +738,10 @@ export default function SpaceBoard() {
   const filteredCommunityIssues = useMemo(() => {
     return issues.filter((iss) => commChannel === 'all' || iss.careerId === commChannel);
   }, [issues, commChannel]);
+
+  const showSensorHud = useMemo(() => {
+    return !!(isNearLobbyDesk || isNearDevWorkstation || isNearArchiveBookshelf || isNearSkillTerminal || isAdjacentToTable);
+  }, [isNearLobbyDesk, isNearDevWorkstation, isNearArchiveBookshelf, isNearSkillTerminal, isAdjacentToTable]);
 
   return (
     <div className={`w-screen h-screen flex flex-col xl:flex-row gap-4 justify-between items-center relative select-none p-4 ${screenShake ? 'console-screen-shake' : ''}`}>
@@ -776,20 +807,59 @@ export default function SpaceBoard() {
         </div>
       </div>
 
-      {/* 2. LEFT COCKPIT DECK */}
-      <div className="fixed top-20 left-4 bottom-4 w-[280px] z-30 flex flex-col gap-4 p-4 glass-cockpit overflow-y-auto pointer-events-auto rounded-xl shadow-2xl select-none">
-        <div className="border-b border-slate-800/80 pb-2">
-          <span className="text-[10px] font-bold text-cyan-400 font-mono tracking-widest uppercase">💾 PILOT DETAILS</span>
-          <h3 className="font-bold font-mono text-slate-100 text-sm mt-1">主控面板状态栏</h3>
+      {/* Collapsed Left Panel Trigger Badge */}
+      {!isLeftPanelOpen && (
+        <div className="fixed top-20 left-4 z-30 animate-slide-in-left">
+          <button
+            onClick={() => {
+              setIsLeftPanelOpen(true);
+              audioManager.playOpen();
+            }}
+            className="px-4 py-3 bg-slate-950/85 backdrop-blur-md hover:bg-slate-900/90 border border-cyan-500/40 hover:border-cyan-400 text-left rounded-xl shadow-xl transition-all duration-200 pointer-events-auto flex items-center gap-3 group"
+          >
+            <div className="relative">
+              <span className="text-lg group-hover:scale-110 transition-transform block">🛠️</span>
+              <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+              <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-cyan-400" />
+            </div>
+            <div>
+              <div className="text-[9px] font-bold text-slate-500 font-mono tracking-wider">PILOT CONSOLE</div>
+              <div className="text-[11px] font-bold font-mono text-slate-200 flex items-center gap-1">
+                主控面板 <span className="text-cyan-400 group-hover:translate-x-0.5 transition-transform">▶</span>
+              </div>
+            </div>
+          </button>
+        </div>
+      )}
+
+      {/* 2. LEFT COCKPIT DECK (COLLAPSIBLE) */}
+      <div className={`fixed top-20 bottom-4 w-[285px] z-30 flex flex-col gap-4 p-4 glass-cockpit overflow-y-auto pointer-events-auto rounded-xl shadow-2xl select-none transition-all duration-300 ${
+        isLeftPanelOpen ? 'left-4 opacity-100 translate-x-0' : '-left-80 opacity-0 -translate-x-full pointer-events-none'
+      }`}>
+        <div className="border-b border-slate-800/80 pb-2 flex justify-between items-center">
+          <div>
+            <span className="text-[10px] font-bold text-cyan-400 font-mono tracking-widest uppercase">💾 PILOT DETAILS</span>
+            <h3 className="font-bold font-mono text-slate-100 text-sm mt-1">主控面板状态栏</h3>
+          </div>
+          <button 
+            onClick={() => {
+              setIsLeftPanelOpen(false);
+              audioManager.playClose();
+            }} 
+            className="px-2 py-1 text-xs font-mono text-slate-400 hover:text-cyan-400 bg-slate-950/50 hover:bg-slate-900 border border-slate-800 rounded transition-all"
+            title="折叠主控面板"
+          >
+            ◀ 折叠
+          </button>
         </div>
 
         {/* User stats overview */}
         <div className="space-y-2 font-mono">
-          <div className="flex justify-between items-center bg-slate-950/40 p-2.5 border border-slate-800/50">
+          <div className="flex justify-between items-center bg-slate-950/40 p-2.5 border border-slate-800/50 rounded-lg">
             <span className="text-[10px] text-slate-500">职业段位</span>
             <span className="text-xs font-bold text-amber-300">{currentCareerId === 'data-analyst' ? '初级数据分析顾问' : currentCareerId ? '软件工程实训生' : '待绑定'}</span>
           </div>
-          <div className="flex justify-between items-center bg-slate-950/40 p-2.5 border border-slate-800/50">
+          <div className="flex justify-between items-center bg-slate-950/40 p-2.5 border border-slate-800/50 rounded-lg">
             <span className="text-[10px] text-slate-500">已点亮能力</span>
             <span className="text-xs font-bold text-cyan-400">
               {skills.length > 0 ? `${skills.filter((s) => s.unlocked).length} / ${skills.length} 个节点` : '0 个节点'}
@@ -800,14 +870,14 @@ export default function SpaceBoard() {
         {/* Environment ambient sensor display */}
         <div className="space-y-2 font-mono">
           <span className="text-[9px] font-bold text-slate-500 tracking-wider">💡 空间环境光效传感器</span>
-          <div className={`p-3 text-center border font-bold text-xs select-none rounded animate-pulse ${
+          <div className={`p-3 text-center border font-bold text-xs select-none rounded-lg animate-pulse ${
             ambientTheme === 'quiet-blue' ? 'bg-blue-950/40 border-cyan-800/60 text-cyan-400' :
             ambientTheme === 'alert-red' ? 'bg-red-950/40 border-red-800/60 text-red-400' :
             ambientTheme === 'celebrate-gold' ? 'bg-amber-950/40 border-amber-800/60 text-amber-400' :
             'bg-slate-900/40 border-slate-800 text-slate-400'
           }`}>
             {ambientTheme === 'quiet-blue' ? '🔵 静谧幽蓝工作环境' :
-             ambientTheme === 'alert-red' ? '🚨 警警报红色异常主题' :
+             ambientTheme === 'alert-red' ? '🚨 警报红色异常主题' :
              ambientTheme === 'celebrate-gold' ? '✨ 金色庆典丰碑主题' :
              '⚪ 经典日光灰度环境'}
           </div>
@@ -818,9 +888,9 @@ export default function SpaceBoard() {
           <div className="space-y-3 font-mono">
             <span className="text-[9px] font-bold text-slate-500 tracking-wider uppercase">🔥 ACTIVE OBJECTIVES</span>
             
-            {activeMission ? (
+            {localActiveMission ? (
               <div className="space-y-2.5">
-                <h4 className="font-bold text-amber-300 text-xs">{activeMission.title}</h4>
+                <h4 className="font-bold text-amber-300 text-xs">{localActiveMission.title}</h4>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
                   {activeMissionDetails?.background
                     ? `${activeMissionDetails.background.substring(0, 75)}...`
@@ -841,16 +911,16 @@ export default function SpaceBoard() {
                 </div>
 
                 <div className="pt-2 border-t border-slate-800/40 space-y-1.5">
-                  <button onClick={() => openBookcasePanel(BOOKCASES.pandas_library)} className="w-full py-1 text-center bg-emerald-950/50 hover:bg-emerald-900/50 border border-emerald-800/50 text-[10px] text-emerald-300">
+                  <button onClick={() => openBookcasePanel(BOOKCASES.pandas_library)} className="w-full py-1 text-center bg-emerald-950/50 hover:bg-emerald-900/50 border border-emerald-800/50 text-[10px] text-emerald-300 rounded">
                     📖 物理资料书架 (RAG)
                   </button>
-                  <button onClick={() => openOverlay('sandbox')} className="w-full py-1 text-center bg-cyan-950/50 hover:bg-cyan-900/50 border border-cyan-800/50 text-[10px] text-cyan-300 font-bold animate-pulse">
+                  <button onClick={() => openOverlay('sandbox')} className="w-full py-1 text-center bg-cyan-950/50 hover:bg-cyan-900/50 border border-cyan-800/50 text-[10px] text-cyan-300 font-bold animate-pulse rounded">
                     💻 打开 splitscreen 编译沙盒
                   </button>
                 </div>
               </div>
             ) : (
-              <div className="border border-dashed border-slate-800/80 p-4 text-center text-slate-500 text-[11px] leading-5">
+              <div className="border border-dashed border-slate-800/80 p-4 text-center text-slate-500 text-[11px] leading-5 rounded-lg">
                 🚨 暂无在研任务，请走到物理大厅接待处绑定职业，或走到主管高凌(x=15, y=6)工位领取任务。
               </div>
             )}
@@ -858,76 +928,104 @@ export default function SpaceBoard() {
         </div>
       </div>
 
-      {/* 3. RIGHT COCKPIT DECK (FAST TRAVEL SHORTCUTS) */}
-      <div className="fixed top-20 right-4 bottom-4 w-[280px] z-30 flex flex-col gap-4 p-4 glass-cockpit overflow-y-auto pointer-events-auto rounded-xl shadow-2xl select-none">
-        <div className="border-b border-slate-800/80 pb-2">
-          <span className="text-[10px] font-bold text-amber-500 font-mono tracking-widest uppercase">🚀 FAST-TRAVEL DECK</span>
-          <h3 className="font-bold font-mono text-slate-100 text-sm mt-1">飞渡导航快捷栏</h3>
+      {/* 3. FLOATING FAST-TRAVEL NAVIGATION (FAB) */}
+      <div className="fixed bottom-6 right-6 z-35 flex flex-col items-end gap-3 pointer-events-auto select-none font-mono">
+        {/* Floating Nav Menu List */}
+        <div className={`flex flex-col gap-2 transition-all duration-300 origin-bottom ${
+          isNavOpen ? 'scale-100 opacity-100 translate-y-0' : 'scale-75 opacity-0 translate-y-8 pointer-events-none'
+        }`}>
+          <div className="bg-slate-950/90 border border-slate-850/80 p-3 rounded-2xl shadow-2xl flex flex-col gap-1.5 w-[220px] backdrop-blur-md">
+            <span className="text-[8px] font-bold text-amber-500 tracking-widest uppercase mb-1 border-b border-slate-800/60 pb-1 flex items-center justify-between">
+              <span>🚀 FAST-TRAVEL DOCK</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+            </span>
+
+            <button onClick={() => { openOverlay('lobby'); setIsNavOpen(false); }} className="w-full py-1.5 px-2.5 bg-slate-900/60 hover:bg-amber-950/30 border border-slate-800/40 hover:border-amber-600/70 rounded-lg text-left text-[11px] text-slate-300 flex justify-between items-center transition-all group">
+              <span>💼 办事大厅 (Lobby)</span>
+              <span className="text-[9px] text-slate-500 group-hover:text-amber-400">👉</span>
+            </button>
+
+            <button onClick={() => { openOverlay('quests'); setIsNavOpen(false); }} className="w-full py-1.5 px-2.5 bg-slate-900/60 hover:bg-blue-950/30 border border-slate-800/40 hover:border-blue-600/70 rounded-lg text-left text-[11px] text-slate-300 flex justify-between items-center transition-all group">
+              <span>📋 任务工位 (Quests)</span>
+              <span className="text-[9px] text-slate-500 group-hover:text-blue-400">👉</span>
+            </button>
+
+            <button onClick={() => { openOverlay('portfolio'); setIsNavOpen(false); }} className="w-full py-1.5 px-2.5 bg-slate-900/60 hover:bg-purple-950/30 border border-slate-800/40 hover:border-purple-600/70 rounded-lg text-left text-[11px] text-slate-300 flex justify-between items-center transition-all group">
+              <span>📊 成长档案 (Portfolio)</span>
+              <span className="text-[9px] text-slate-500 group-hover:text-purple-400">👉</span>
+            </button>
+
+            <button onClick={() => { openOverlay('skills'); setIsNavOpen(false); }} className="w-full py-1.5 px-2.5 bg-slate-900/60 hover:bg-cyan-950/30 border border-slate-800/40 hover:border-cyan-600/70 rounded-lg text-left text-[11px] text-slate-300 flex justify-between items-center transition-all group">
+              <span>🌟 技能星图 (Skill Tree)</span>
+              <span className="text-[9px] text-slate-500 group-hover:text-cyan-400">👉</span>
+            </button>
+
+            <button onClick={() => { openOverlay('community'); setIsNavOpen(false); }} className="w-full py-1.5 px-2.5 bg-slate-900/60 hover:bg-emerald-950/30 border border-slate-800/40 hover:border-emerald-600/70 rounded-lg text-left text-[11px] text-slate-300 flex justify-between items-center transition-all group">
+              <span>💬 交流白板 (Community)</span>
+              <span className="text-[9px] text-slate-500 group-hover:text-emerald-400">👉</span>
+            </button>
+
+            <button onClick={() => { openBookcasePanel(BOOKCASES.pandas_library); setIsNavOpen(false); }} className="w-full py-1.5 px-2.5 bg-slate-900/60 hover:bg-teal-950/30 border border-slate-800/40 hover:border-teal-600/70 rounded-lg text-left text-[11px] text-slate-300 flex justify-between items-center transition-all group">
+              <span>🏛️ 物理资料库 (Archive)</span>
+              <span className="text-[9px] text-slate-500 group-hover:text-teal-400">👉</span>
+            </button>
+          </div>
         </div>
 
-        {/* Buttons List */}
-        <div className="flex flex-col gap-2 font-mono">
-          <button onClick={() => openOverlay('lobby')} className="w-full py-2.5 px-3 bg-slate-950/60 hover:bg-amber-950/30 border border-slate-800 hover:border-amber-600/70 text-left text-xs text-slate-300 flex justify-between items-center transition-all group">
-            <span>💼 办事大厅 (Lobby)</span>
-            <span className="text-[9px] text-slate-500 group-hover:text-amber-400">传送 👉</span>
-          </button>
+        {/* Main Circular Trigger Button */}
+        <button
+          onClick={() => {
+            setIsNavOpen(!isNavOpen);
+            audioManager.playOpen();
+          }}
+          className={`h-14 px-4 rounded-full flex items-center gap-2 font-bold shadow-2xl border transition-all duration-300 ${
+            isNavOpen
+              ? 'bg-slate-900 border-amber-500 text-amber-400 scale-95 shadow-[0_0_20px_rgba(245,158,11,0.4)]'
+              : 'bg-slate-950 border-slate-800 text-slate-300 hover:text-white hover:border-amber-500 hover:shadow-[0_0_15px_rgba(245,158,11,0.25)]'
+          }`}
+          title="飞渡导航快捷栏"
+        >
+          <span className={`text-xl transition-transform duration-300 ${isNavOpen ? 'rotate-45' : 'rotate-0'}`}>🚀</span>
+          <span className="text-xs tracking-wider">飞渡导航</span>
+          <span className="text-[9px] text-slate-500 bg-slate-900 border border-slate-800/80 px-1.5 py-0.5 rounded-full ml-1">
+            {isNavOpen ? '关闭' : '传送'}
+          </span>
+        </button>
+      </div>
 
-          <button onClick={() => openOverlay('quests')} className="w-full py-2.5 px-3 bg-slate-950/60 hover:bg-blue-950/30 border border-slate-800 hover:border-blue-600/70 text-left text-xs text-slate-300 flex justify-between items-center transition-all group">
-            <span>📋 任务工位 (Quests Board)</span>
-            <span className="text-[9px] text-slate-500 group-hover:text-blue-400">传送 👉</span>
-          </button>
-
-          <button onClick={() => openOverlay('portfolio')} className="w-full py-2.5 px-3 bg-slate-950/60 hover:bg-purple-950/30 border border-slate-800 hover:border-purple-600/70 text-left text-xs text-slate-300 flex justify-between items-center transition-all group">
-            <span>📊 成长档案 (Portfolio)</span>
-            <span className="text-[9px] text-slate-500 group-hover:text-purple-400">传送 👉</span>
-          </button>
-
-          <button onClick={() => openOverlay('skills')} className="w-full py-2.5 px-3 bg-slate-950/60 hover:bg-cyan-950/30 border border-slate-800 hover:border-cyan-600/70 text-left text-xs text-slate-300 flex justify-between items-center transition-all group">
-            <span>🌟 技能星图 (Skill Tree)</span>
-            <span className="text-[9px] text-slate-500 group-hover:text-cyan-400">传送 👉</span>
-          </button>
-
-          <button onClick={() => openOverlay('community')} className="w-full py-2.5 px-3 bg-slate-950/60 hover:bg-emerald-950/30 border border-slate-800 hover:border-emerald-600/70 text-left text-xs text-slate-300 flex justify-between items-center transition-all group">
-            <span>💬 交流白板 (Community)</span>
-            <span className="text-[9px] text-slate-500 group-hover:text-emerald-400">传送 👉</span>
-          </button>
-
-          <button onClick={() => openBookcasePanel(BOOKCASES.pandas_library)} className="w-full py-2.5 px-3 bg-slate-950/60 hover:bg-teal-950/30 border border-slate-800 hover:border-teal-600/70 text-left text-xs text-slate-300 flex justify-between items-center transition-all group">
-            <span>🏛️ 物理资料库 (Archive)</span>
-            <span className="text-[9px] text-slate-500 group-hover:text-teal-400">检索 👉</span>
-          </button>
-        </div>
-
-        {/* Proximity Tip helper list */}
-        <div className="flex-1 flex flex-col justify-end border-t border-slate-800/80 pt-3">
-          <div className="bg-slate-950/50 p-2.5 border border-slate-800/80 font-mono text-[10px] text-slate-400 space-y-2">
-            <span className="text-[9px] font-bold text-slate-500">📍 物理传感器雷达：</span>
-            
+      {/* 4. FLOATING PROXIMITY SENSOR RADAR TIP */}
+      <div className={`fixed bottom-8 left-1/2 -translate-x-1/2 z-30 font-mono transition-all duration-300 ${
+        showSensorHud ? 'translate-y-0 opacity-100' : 'translate-y-12 opacity-0 pointer-events-none'
+      }`}>
+        <div className="bg-slate-950/90 border-2 border-cyan-500/60 shadow-[0_0_25px_rgba(6,182,212,0.3)] px-5 py-3 rounded-full flex items-center gap-3 select-none backdrop-blur-md">
+          <div className="relative flex items-center justify-center">
+            <span className="text-base animate-pulse">📡</span>
+            <span className="absolute w-4 h-4 rounded-full border border-cyan-400 animate-ping opacity-60" />
+          </div>
+          
+          <div className="text-xs text-slate-200">
             {isNearLobbyDesk && (
-              <div className="text-amber-300 font-bold animate-pulse">✓ 靠近大厅前台，按 [Enter] 打开路线大陆。</div>
+              <span className="flex items-center gap-2"><strong className="text-amber-400">大厅前台：</strong> 靠近大厅前台，按 <kbd className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-[10px] text-white">Enter</kbd> 或 <kbd className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-[10px] text-white">Space</kbd> 绑定职业。</span>
             )}
             {isNearDevWorkstation && (
-              <div className="text-blue-300 font-bold animate-pulse">✓ 靠近研发工位，按 [Enter] 展开任务列表。</div>
+              <span className="flex items-center gap-2"><strong className="text-blue-400">研发工位：</strong> 靠近研发工位，按 <kbd className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-[10px] text-white">Enter</kbd> 或 <kbd className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-[10px] text-white">Space</kbd> 展开任务列表。</span>
             )}
             {isNearArchiveBookshelf && (
-              <div className="text-emerald-300 font-bold animate-pulse">✓ 靠近物理资料库，按 [Enter] 开始 RAG 语义。</div>
+              <span className="flex items-center gap-2"><strong className="text-emerald-400">物理资料库：</strong> 靠近物理资料库，按 <kbd className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-[10px] text-white">Enter</kbd> 或 <kbd className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-[10px] text-white">Space</kbd> 开始 RAG 检索。</span>
             )}
             {isNearSkillTerminal && (
-              <div className="text-cyan-300 font-bold animate-pulse">✓ 靠近技能星图终端，按 [Enter] 量子访问！</div>
+              <span className="flex items-center gap-2"><strong className="text-cyan-400">技能终端：</strong> 靠近技能星图终端，按 <kbd className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-[10px] text-white">Enter</kbd> 或 <kbd className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-[10px] text-white">Space</kbd> 进入量子技能星图！</span>
             )}
             {isAdjacentToTable && (
-              <div className="text-indigo-300 font-bold animate-pulse">✓ 靠近会议圆桌，按 [Enter] 开始多智能体晨会！</div>
-            )}
-            {!isNearLobbyDesk && !isNearDevWorkstation && !isNearArchiveBookshelf && !isNearSkillTerminal && !isAdjacentToTable && (
-              <div className="text-slate-500 italic">移动你的角色靠近前台、书架、星图终端或会议桌会有物理触发！</div>
+              <span className="flex items-center gap-2"><strong className="text-indigo-400">会议圆桌：</strong> 靠近会议圆桌，按 <kbd className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-[10px] text-white">Enter</kbd> 或 <kbd className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-[10px] text-white">Space</kbd> 开启多智能体仲裁晨会！</span>
             )}
           </div>
         </div>
       </div>
 
       {/* ================== CENTRAL 2D MAP GRID PANEL ================== */}
-      <div className="w-full flex-1 flex items-center justify-center relative">
-        <div className="transform scale-[0.75] md:scale-[0.85] xl:scale-100 origin-center transition-all duration-300">
+      <div className="w-full h-full flex-1 flex items-center justify-center relative overflow-hidden">
+        <div className="transform scale-[0.85] sm:scale-[0.95] md:scale-100 lg:scale-[1.05] xl:scale-[1.1] 2xl:scale-[1.15] origin-center transition-all duration-300 select-none">
           
           {/* Main RPG grid container */}
           <div className="relative w-[816px] h-[816px] border-8 border-slate-800 bg-slate-950 p-1 overflow-hidden shadow-2xl crt-screen">
@@ -1100,6 +1198,8 @@ export default function SpaceBoard() {
                   className="absolute w-[32px] h-[32px] flex items-center justify-center text-xl cursor-pointer z-20 select-none group"
                   style={{ transform: `translate3d(${coords.x * 32}px, ${coords.y * 32}px, 0)` }}
                 >
+                  {/* Character shadow */}
+                  <div className="absolute -bottom-1.5 w-6 h-2 bg-black/45 rounded-full blur-[1px] z-10 pointer-events-none" />
                   {isTargetNear && (
                     <div className="absolute bottom-8 flex flex-col items-center animate-bounce z-30">
                       <div className="bg-slate-900/95 border-2 border-amber-500 text-[9px] font-bold text-amber-300 font-mono py-1 px-1.5 rounded whitespace-nowrap shadow-md">
@@ -1122,6 +1222,8 @@ export default function SpaceBoard() {
               className="absolute w-[32px] h-[32px] flex items-center justify-center z-30 transition-all duration-100 select-none pointer-events-none"
               style={{ transform: `translate3d(${playerCoords.x * 32}px, ${playerCoords.y * 32}px, 0)` }}
             >
+              {/* Character shadow */}
+              <div className="absolute -bottom-1.5 w-6 h-2 bg-black/45 rounded-full blur-[1px] z-10 pointer-events-none" />
               <div className="absolute w-8 h-8 rounded-full bg-cyan-500/20 blur-xs scale-110 animate-ping" />
               <div className="absolute w-8 h-8 rounded-full border-2 border-cyan-400/40 scale-100" />
 
@@ -1147,6 +1249,8 @@ export default function SpaceBoard() {
                   className="absolute w-[32px] h-[32px] flex items-center justify-center z-30 transition-all duration-100 select-none pointer-events-none"
                   style={{ transform: `translate3d(${p.x * 32}px, ${p.y * 32}px, 0)` }}
                 >
+                  {/* Character shadow */}
+                  <div className="absolute -bottom-1.5 w-6 h-2 bg-black/45 rounded-full blur-[1px] z-10 pointer-events-none" />
                   <div className="absolute w-8 h-8 rounded-full bg-indigo-500/20 blur-xs scale-110 animate-ping" style={{ filter: `hue-rotate(${hue}deg)` }} />
                   <div className="absolute w-8 h-8 rounded-full border-2 border-indigo-400/40 scale-100" style={{ filter: `hue-rotate(${hue}deg)` }} />
                   
@@ -1162,6 +1266,19 @@ export default function SpaceBoard() {
                 </div>
               );
             })}
+
+            {/* Dynamic ambient lighting/spotlight mask (Phase 10) */}
+            <div 
+              className="absolute inset-0 pointer-events-none z-25 transition-all duration-300 mix-blend-multiply"
+              style={{
+                background: `radial-gradient(circle 180px at ${playerCoords.x * 32 + 16}px ${playerCoords.y * 32 + 16}px, ${
+                  ambientTheme === 'quiet-blue' ? 'rgba(186, 230, 253, 0.25) 0%, rgba(30, 41, 59, 0.65) 60%, rgba(15, 23, 42, 0.92) 100%' :
+                  ambientTheme === 'alert-red' ? 'rgba(254, 202, 202, 0.2) 0%, rgba(127, 29, 29, 0.7) 50%, rgba(15, 23, 42, 0.95) 100%' :
+                  ambientTheme === 'celebrate-gold' ? 'rgba(254, 243, 199, 0.3) 0%, rgba(120, 53, 4, 0.6) 60%, rgba(15, 23, 42, 0.9) 100%' :
+                  'rgba(255, 255, 240, 0.15) 0%, rgba(30, 41, 59, 0.5) 65%, rgba(15, 23, 42, 0.88) 100%'
+                })`
+              }}
+            />
 
             {/* Ambient Overlays (Prompt-to-Light) */}
             {ambientTheme === 'quiet-blue' && (
@@ -1386,7 +1503,7 @@ export default function SpaceBoard() {
       )}
 
       {/* 5. CODE SANDBOX WORKSPACE (SLIDE-OUT DRAWER) */}
-      {activeOverlay === 'sandbox' && activeMission && (
+      {activeOverlay === 'sandbox' && localActiveMission && (
         <div className="fixed top-20 right-4 bottom-4 w-[740px] bg-slate-950/95 border-2 border-cyan-500 rounded-xl shadow-2xl z-40 p-5 flex flex-col gap-4 animate-slide-in-right pointer-events-auto select-none">
           <div className="flex justify-between items-center border-b border-slate-800 pb-3">
             <div className="flex items-center gap-2">
@@ -1404,7 +1521,7 @@ export default function SpaceBoard() {
             <div className="flex flex-col gap-3 overflow-y-auto pr-1">
               <div className="bg-slate-900/50 p-4 border border-slate-800/60 rounded">
                 <span className="text-[10px] text-slate-500 uppercase tracking-widest">Quest Overview</span>
-                <h4 className="font-bold text-amber-300 text-xs mt-1">{activeMission.title}</h4>
+                <h4 className="font-bold text-amber-300 text-xs mt-1">{localActiveMission.title}</h4>
                 <p className="text-[11px] text-slate-300 mt-2 leading-relaxed">
                   {activeMissionDetails?.background || activeMissionDetails?.description || '正在载入实训任务背景细节...'}
                 </p>
