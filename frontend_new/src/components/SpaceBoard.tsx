@@ -129,6 +129,7 @@ export default function SpaceBoard() {
   const [chatInput, setChatInput] = useState('');
   const [isNpcStreaming, setIsNpcStreaming] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatInputRef = useRef<HTMLInputElement>(null);
 
   // Meeting & Arbitration state
   const [isMeetingOpen, setIsMeetingOpen] = useState(false);
@@ -282,6 +283,20 @@ export default function SpaceBoard() {
         return;
       }
 
+      // Prohibit movement & trigger keys if conversing; bind space/enter to auto-focus chat input
+      if (activeChatNpc) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          closeConversation();
+          return;
+        }
+        if (e.key === ' ' || e.key === 'Enter') {
+          e.preventDefault();
+          chatInputRef.current?.focus();
+        }
+        return;
+      }
+
       const now = Date.now();
       if (now - lastMoveTimeRef.current < 50) return;
 
@@ -345,7 +360,7 @@ export default function SpaceBoard() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [movePlayer, interactiveNpcId, isAdjacentToTable, isNearLobbyDesk, isNearDevWorkstation, isNearArchiveBookshelf]);
+  }, [movePlayer, interactiveNpcId, isAdjacentToTable, isNearLobbyDesk, isNearDevWorkstation, isNearArchiveBookshelf, activeChatNpc]);
 
   const openOverlay = (overlayType: 'lobby' | 'quests' | 'portfolio' | 'community' | 'sandbox') => {
     audioManager.playOpen();
@@ -1389,7 +1404,7 @@ export default function SpaceBoard() {
               <div className="max-h-[160px] overflow-y-auto space-y-3 mb-4 pr-1 text-xs leading-6 text-slate-200">
                 {chatMessages.map((msg, index) => (
                   <div key={index} className={`flex gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`p-2 border max-w-[85%] ${msg.role === 'user' ? 'border-amber-700 bg-amber-950/20 text-slate-300' : 'border-slate-800 bg-slate-900/60'}`}>
+                    <div className={`p-2 border max-w-[85%] rounded shadow-sm ${msg.role === 'user' ? 'border-amber-500/40 bg-amber-950/50 text-amber-200 font-semibold' : 'border-slate-800 bg-slate-900/60'}`}>
                       {msg.role === 'user' ? '你: ' : ''}{msg.content || <span className="animate-pulse">正在思考...</span>}
                     </div>
                   </div>
@@ -1399,6 +1414,7 @@ export default function SpaceBoard() {
 
               <div className="flex gap-2">
                 <input
+                  ref={chatInputRef}
                   type="text"
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
