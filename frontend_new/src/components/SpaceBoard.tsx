@@ -929,12 +929,12 @@ export default function SpaceBoard() {
       </div>
 
       {/* 3. FLOATING FAST-TRAVEL NAVIGATION (FAB) */}
-      <div className="fixed bottom-6 right-6 z-35 flex flex-col items-end gap-3 pointer-events-auto select-none font-mono">
+      <div className="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-3 pointer-events-auto select-none font-mono">
         {/* Floating Nav Menu List */}
         <div className={`flex flex-col gap-2 transition-all duration-300 origin-bottom ${
           isNavOpen ? 'scale-100 opacity-100 translate-y-0' : 'scale-75 opacity-0 translate-y-8 pointer-events-none'
         }`}>
-          <div className="bg-slate-950/90 border border-slate-850/80 p-3 rounded-2xl shadow-2xl flex flex-col gap-1.5 w-[220px] backdrop-blur-md">
+          <div className="bg-slate-950/90 border border-slate-800/80 p-3 rounded-2xl shadow-2xl flex flex-col gap-1.5 w-[220px] backdrop-blur-md">
             <span className="text-[8px] font-bold text-amber-500 tracking-widest uppercase mb-1 border-b border-slate-800/60 pb-1 flex items-center justify-between">
               <span>🚀 FAST-TRAVEL DOCK</span>
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
@@ -1581,7 +1581,7 @@ export default function SpaceBoard() {
                   onClick={handleSandboxSubmit}
                   disabled={testResult !== 'success' || isCompiling}
                   className={`flex-1 py-2 text-center font-bold text-xs rounded transition-colors active:scale-95 duration-75 ${
-                    testResult === 'success' ? 'bg-amber-500 hover:bg-amber-400 text-slate-950' : 'bg-slate-850 text-slate-500 cursor-not-allowed'
+                    testResult === 'success' ? 'bg-amber-500 hover:bg-amber-400 text-slate-950' : 'bg-slate-800 text-slate-500 cursor-not-allowed'
                   }`}
                 >
                   🚀 交付并提交评审
@@ -1909,7 +1909,7 @@ export default function SpaceBoard() {
                 className="w-full h-32 pixel-input text-xs resize-none"
               />
               <div className="flex justify-end gap-2">
-                <button onClick={() => setShowPostDialog(false)} className="py-1.5 px-4 bg-slate-850 border border-slate-700 text-xs rounded text-slate-400">取消</button>
+                <button onClick={() => setShowPostDialog(false)} className="py-1.5 px-4 bg-slate-800 border border-slate-700 text-xs rounded text-slate-400">取消</button>
                 <button onClick={handleCreatePost} className="py-1.5 px-4 bg-emerald-600 border border-emerald-500 text-slate-950 font-bold text-xs rounded">确认发布</button>
               </div>
             </div>
