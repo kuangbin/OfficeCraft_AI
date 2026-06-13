@@ -900,7 +900,6 @@ a {
 
 .pixel-dev-desk {
   animation: screen-glow-cyan 3s ease-in-out infinite;
-  position: relative;
   overflow: hidden;
 }
 

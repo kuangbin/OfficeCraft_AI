@@ -198,7 +198,7 @@ export default function SpaceBoard() {
   const isNearDevWorkstation = useMemo(() => {
     return (
       (playerCoords.y >= 13 && playerCoords.y <= 15 && playerCoords.x >= 2 && playerCoords.x <= 8) ||
-      (playerCoords.y >= 17 && playerCoords.y <= 19 && playerCoords.x >= 2 && playerCoords.x <= 8)
+      (playerCoords.y >= 16 && playerCoords.y <= 18 && playerCoords.x >= 2 && playerCoords.x <= 8)
     );
   }, [playerCoords]);
 
@@ -1091,7 +1091,7 @@ export default function SpaceBoard() {
             </div>
             <div
               className="absolute top-0 left-0 w-[224px] h-[32px] pixel-dev-desk flex items-center justify-center font-bold text-[9px] tracking-tight whitespace-nowrap text-slate-100 z-10"
-              style={{ transform: `translate3d(64px, 576px, 0)` }}
+              style={{ transform: `translate3d(64px, 544px, 0)` }}
             >
               💻 研发工位 B (Pandas Analytics Engine)
             </div>

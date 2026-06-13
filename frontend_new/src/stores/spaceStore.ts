@@ -82,10 +82,10 @@ function createCollisionMatrix(): number[][] {
     matrix[3][x] = 1;
   }
 
-  // 5. Dev Bay tables (y = 14, x = 2 to 8) and (y = 18, x = 2 to 8)
+  // 5. Dev Bay tables (y = 14, x = 2 to 8) and (y = 17, x = 2 to 8)
   for (let x = 2; x <= 8; x++) {
     matrix[14][x] = 1;
-    matrix[18][x] = 1;
+    matrix[17][x] = 1;
   }
 
   // 6. Bookcase collision nodes (cannot walk on them, must stand adjacent)
