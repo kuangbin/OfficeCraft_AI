@@ -3,13 +3,13 @@ import AppErrorBoundary from "@/components/common/AppErrorBoundary";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "CareerCraft - AI 驱动的职业模拟沙盒",
+  title: "OfficeCraft AI - AI 驱动的 2D 像素数智化数字孪生办公室",
   description:
-    "面向计算机系大学生的职业模拟器：完成真实职业任务，接受 AI 同事评审，沉淀作品集与技能树。",
-  keywords: "CareerCraft, AI, 职业模拟, 游戏化学习, 像素风",
+    "面向极客与开发者的 2D 虚拟办公室沙盒：基于 GLM-5 驱动的多智能体协作站会、RAG 语义检索、代码沙箱实训与高维交互式能力星图。",
+  keywords: "OfficeCraft AI, GLM-5, AI, 2D 虚拟办公室, 职业模拟, 游戏化学习, 像素风, 技能树, RAG 检索",
   openGraph: {
-    title: "CareerCraft - AI 驱动的职业模拟沙盒",
-    description: "完成真实职业任务，接受 AI 同事评审，沉淀作品集与技能树。",
+    title: "OfficeCraft AI - AI 驱动的 2D 像素数智化数字孪生办公室",
+    description: "基于 GLM-5 驱动的多智能体协作站会、RAG 语义检索、代码沙箱实训与高维交互式能力星图。",
     type: "website",
   },
 };
