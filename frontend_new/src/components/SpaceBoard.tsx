@@ -394,9 +394,12 @@ export default function SpaceBoard() {
 
     const userMsg = chatInput.trim();
     setChatInput('');
-    setChatMessages((prev) => [...prev, { role: 'user', content: userMsg }]);
     setIsNpcStreaming(true);
-    setChatMessages((prev) => [...prev, { role: 'npc', content: '' }]);
+    setChatMessages((prev) => [
+      ...prev,
+      { role: 'user', content: userMsg },
+      { role: 'npc', content: '' },
+    ]);
 
     try {
       await streamChat(activeChatNpc.roleName, userMsg, (chunk: string) => {
