@@ -1,7 +1,7 @@
 # 🗺️ OfficeCraft AI - 2D 像素数字孪生办公室与空间交互沙盒
 
 **赛道**：赛道三 - 数字孪生与沉浸交互 (Track Three: Digital Twin & Immersive Interaction)  
-**核心模型**：Gemma 4，本地推荐通过 Ollama / OpenAI-compatible API 调用 `gemma4:26b`，亦支持 Gemini 与云端各厂商模型。  
+**核心模型**：GLM-5，支持云端各厂商模型、OpenAI-compatible 以及 Gemini / Anthropic。  
 **项目定位**：面向技术学习者、转行者和极客人群，将传统的“网页任务面板”重构为一张**可操控走动、可物理交互、有空间记忆的 2D 像素虚拟办公室数字孪生沙盒**（星露谷物语 / Gather.town 风格）。
 
 > 这不是一个普通的题库，而是一个带有物理空间实体和环境感知反馈的**“数字孪生职场模拟器”**。
@@ -54,7 +54,7 @@ Next.js 14 前端 (React)
   -> useSpaceStore (Zustand 物理状态机 & translate3d 硬件加速渲染)
   -> FastAPI API (Python 异步路由)
   -> TeamMeetingOrchestrator (多角色晨会编排 / 空间碰撞拦截 / 情感记忆注入)
-  -> Gemma 4 / Gemini 或本地离线 fallback 模式
+  -> GLM-5 / Gemini / Anthropic 或本地离线 fallback 模式
   -> SQLite (空间格点坐标 + 情感记忆日志 + 会议历史记录)
   -> ChromaDB + 实体书架局部 Markdown 知识库 (Spatial RAG)
 ```
@@ -66,7 +66,7 @@ Next.js 14 前端 (React)
 | **前端** | Next.js 14 (React), Zustand, Tailwind CSS, TypeScript, Web Audio |
 | **后端** | FastAPI, SQLAlchemy, SQLite, Pydantic v2 |
 | **向量库 (RAG)** | ChromaDB + 确定性 MD5 Hashing 嵌入 + 词频加权 (Hybrid Seek) |
-| **大模型接入** | 统一 LLMClient 抽象，支持 Gemma 4 / Gemini / OpenAI-compatible / Anthropic / Ollama |
+| **大模型接入** | 统一 LLMClient 抽象，支持 GLM-5 / Gemini / OpenAI-compatible / Anthropic / Ollama |
 
 ---
 
