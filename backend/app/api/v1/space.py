@@ -68,9 +68,22 @@ async def get_space_state(
     )
 
   # Determine environmental lighting theme:
-  # - If active mission exists: default to "quiet-blue" (study/development focus)
+  # - If active anomaly exists and is active: "alert-red"
+  # - Else if active mission exists: default to "quiet-blue" (study/development focus)
   # - Else: "default"
   ambient_theme = "quiet-blue" if active_mission else "default"
+  if user.active_anomaly and user.anomaly_status == "active":
+    ambient_theme = "alert-red"
+
+  active_anomaly = None
+  if user.active_anomaly and user.anomaly_status == "active":
+    active_anomaly = schemas.SpaceAnomaly(
+        anomaly_id=user.active_anomaly,
+        title="数据库 CPU 100% 满载故障",
+        description="数据库进程因大量的 N+1 关联查询及未优化的大表 JOIN 发生死锁。连接池耗尽导致物理服务器 CPU 100% 满载、严重过热！",
+        cpu_load=user.anomaly_cpu,
+        status=user.anomaly_status,
+    )
 
   # Static map assets URL
   map_assets_url = "http://localhost:8000/static/map_tile_v1.png"
@@ -81,6 +94,7 @@ async def get_space_state(
       map_assets_url=map_assets_url,
       active_mission=active_mission,
       unresolved_conflict=unresolved_conflict,
+      active_anomaly=active_anomaly,
   )
 
 
@@ -218,6 +232,125 @@ async def arbitrate_meeting_route(
   except Exception as e:
     logger.error("Arbitration failed: %s", e)
     raise HTTPException(status_code=500, detail="Arbitration processing failed.")
+
+
+@router.post(
+    "/anomaly/trigger",
+    summary="模拟触发数据库 CPU 满载突发故障",
+    response_model=schemas.SpaceAnomaly,
+)
+async def trigger_anomaly_endpoint(
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> schemas.SpaceAnomaly:
+  """Triggers database P0 CPU overload anomaly and broadcasts alert to other players."""
+  user = db.query(models.User).filter_by(id=user_id).first()
+  if not user:
+    raise HTTPException(status_code=404, detail="User not found.")
+
+  user.active_anomaly = "db_cpu_overload"
+  user.anomaly_cpu = 100
+  user.anomaly_status = "active"
+  db.commit()
+
+  # Construct anomaly response
+  anomaly = schemas.SpaceAnomaly(
+      anomaly_id="db_cpu_overload",
+      title="数据库 CPU 100% 满载故障",
+      description="数据库进程因大量的 N+1 关联查询及未优化的大表 JOIN 发生死锁。连接池耗尽导致物理服务器 CPU 100% 满载、严重过热！",
+      cpu_load=100,
+      status="active",
+  )
+
+  # Broadcast trigger packet via WebSocket to alert other sessions
+  try:
+    await manager.broadcast({
+        "type": "ANOMALY_TRIGGER",
+        "anomaly": {
+            "anomaly_id": "db_cpu_overload",
+            "title": "数据库 CPU 100% 满载故障",
+            "description": "数据库进程因大量的 N+1 关联查询及未优化的大表 JOIN 发生死锁。连接池耗尽导致物理服务器 CPU 100% 满载、严重过热！",
+            "cpu_load": 100,
+            "status": "active"
+        }
+    })
+  except Exception as e:
+    logger.warning("Failed to broadcast anomaly trigger: %s", e)
+
+  return anomaly
+
+
+@router.post(
+    "/anomaly/resolve",
+    summary="提交抢修脚本并诊断恢复服务",
+    response_model=schemas.SpaceAnomalyResolveResponse,
+)
+async def resolve_anomaly_endpoint(
+    request: schemas.SpaceAnomalyResolveRequest = Body(...),
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> schemas.SpaceAnomalyResolveResponse:
+  """Evaluates script keywords for SQL indexes or Python try-except blocks, and clears anomaly."""
+  user = db.query(models.User).filter_by(id=user_id).first()
+  if not user:
+    raise HTTPException(status_code=404, detail="User not found.")
+
+  if not user.active_anomaly or user.anomaly_status != "active":
+    return schemas.SpaceAnomalyResolveResponse(
+        status="fail",
+        feedback="当前并无活跃的系统故障，无需抢修！",
+        xp_gained=0,
+    )
+
+  script = request.script.lower()
+
+  # Keyword evaluation
+  is_sql_index = "create index" in script and "on" in script
+  is_python_exception = "try" in script and "except" in script
+
+  if is_sql_index:
+    feedback = (
+        "✓ 优化成功！已检测到 SQL 索引创建语句。成功为高频查询列创建索引，"
+        "查询检索复杂度从 O(N) 降至 O(log N)，彻底消除全表扫描，CPU 负载降回 12%！"
+    )
+    status = "success"
+    xp_gained = 50
+  elif is_python_exception:
+    feedback = (
+        "✓ 修复成功！已检测到 Python 异常捕获块。成功捕获连接超时并调用了 "
+        "db.rollback() 释放死锁连接，连接池耗尽危机完全解除，CPU 负载降回 15%！"
+    )
+    status = "success"
+    xp_gained = 50
+  else:
+    feedback = (
+        "❌ 诊断失败！未检测到有效的异常捕获块 (try-except) 语法，"
+        "或未检测到针对数据大表进行索引创建的优化 (CREATE INDEX ... ON)。故障依然存在！"
+    )
+    status = "fail"
+    xp_gained = 0
+
+  if status == "success":
+    user.active_anomaly = None
+    user.anomaly_cpu = 0
+    user.anomaly_status = "resolved"
+    user.total_xp += xp_gained
+    db.commit()
+
+    # Broadcast resolved packet to other sessions
+    try:
+      await manager.broadcast({
+          "type": "ANOMALY_RESOLVED",
+          "xp_gained": xp_gained
+      })
+    except Exception as e:
+      logger.warning("Failed to broadcast anomaly resolution: %s", e)
+
+  return schemas.SpaceAnomalyResolveResponse(
+      status=status,
+      feedback=feedback,
+      xp_gained=xp_gained,
+  )
 
 
 class ConnectionManager:

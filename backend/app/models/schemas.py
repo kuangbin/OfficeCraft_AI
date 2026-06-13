@@ -275,6 +275,16 @@ class SpaceConflict(BaseModel):
   description: str
 
 
+class SpaceAnomaly(BaseModel):
+  """Details of an active virtual office/mainframe anomaly."""
+
+  anomaly_id: str
+  title: str
+  description: str
+  cpu_load: int
+  status: str
+
+
 class SpaceStateResponse(BaseModel):
   """Aggregated response for spatial state recovery on login/refresh."""
 
@@ -283,6 +293,7 @@ class SpaceStateResponse(BaseModel):
   map_assets_url: str
   active_mission: SpaceActiveMission | None = None
   unresolved_conflict: SpaceConflict | None = None
+  active_anomaly: SpaceAnomaly | None = None
 
 
 class SpaceMoveRequest(BaseModel):
@@ -336,5 +347,19 @@ class SpaceArbitrateResponse(BaseModel):
   dialogue_history: list[dict[str, Any]]
   xp_gained: int
   feedback: str
+
+
+class SpaceAnomalyResolveRequest(BaseModel):
+  """Request schema for anomaly resolution."""
+
+  script: str
+
+
+class SpaceAnomalyResolveResponse(BaseModel):
+  """Response schema for anomaly resolution feedback."""
+
+  status: str
+  feedback: str
+  xp_gained: int
 
 

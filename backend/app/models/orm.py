@@ -22,6 +22,9 @@ class User(base):
   total_xp = Column(Integer, nullable=False, default=0)
   coord_x = Column(Integer, nullable=False, default=0)
   coord_y = Column(Integer, nullable=False, default=0)
+  active_anomaly = Column(String, nullable=True, default=None)
+  anomaly_cpu = Column(Integer, nullable=False, default=0)
+  anomaly_status = Column(String, nullable=False, default="resolved")
 
   # Relationships for cascade deletion and easy joining
   skills = relationship(

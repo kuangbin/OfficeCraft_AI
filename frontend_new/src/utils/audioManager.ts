@@ -302,6 +302,42 @@ class AudioManager {
       osc.stop(now + startDelay + dur);
     });
   }
+
+  /**
+   * Synthesizes a low-to-high sweep pitch-bend siren (8-bit siren: 330Hz -> 660Hz -> 330Hz)
+   */
+  public playAlarmSiren() {
+    this.initContext();
+    if (this.isMuted || !this.ctx || this.volume <= 0) return;
+
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gainNode = this.ctx.createGain();
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(330, now);
+    osc.frequency.linearRampToValueAtTime(660, now + 0.4);
+    osc.frequency.linearRampToValueAtTime(330, now + 0.8);
+    osc.frequency.linearRampToValueAtTime(660, now + 1.2);
+    osc.frequency.linearRampToValueAtTime(330, now + 1.6);
+
+    gainNode.gain.setValueAtTime(0.04 * this.volume, now);
+    gainNode.gain.linearRampToValueAtTime(0.04 * this.volume, now + 1.4);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, now + 1.6);
+
+    osc.connect(gainNode);
+    gainNode.connect(this.ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + 1.6);
+  }
+
+  /**
+   * Plays the celebrate gold theme arpeggio.
+   */
+  public playCelebrateGold() {
+    this.playThemeTransition('celebrate-gold');
+  }
 }
 
 export const audioManager = new AudioManager();

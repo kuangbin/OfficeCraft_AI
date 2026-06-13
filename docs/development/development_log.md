@@ -3,9 +3,9 @@
 
 本文档用于统一记录 OfficeCraft AI (2D 像素数智化数字孪生办公室) 的模块设计进化、里程碑交付细节以及未来技术规划路径。
 
-## 🚩 当前里程碑：里程碑 19 (Phase 10, Phase 11 & Phase 12：2D 孪生视口重构、AI 交互姿态动画与多人协同空间实时聊天及 8-Bit 鸣笛全面交付)
+## 🚩 当前里程碑：里程碑 20 (Phase 13：虚拟办公室异常事件、服务器离线事故与应急抢修控制台全面交付)
 
-随着 Phase 10、Phase 11 以及 Phase 12 研发任务的圆满交付，OfficeCraft AI 进一步升华为集视口自适应缩放、多状态按需姿态推导微动效、RPG 极客头顶 5 秒消散聊天气泡、智能 HUD 面板位置避让和 Web Audio 纯程序发声于一体的高完成度 2D 数字孪生办公室实训空间！
+随着 Phase 10、Phase 11、Phase 12 以及 Phase 13 研发任务的圆满交付，OfficeCraft AI 进一步升华为集视口自适应缩放、多状态姿态微动效、RPG 多人空间实时聊天、8-Bit 鸣笛以及 2D 孪生故障突发诊断与 RAG 引导自愈于一体的高完成度 2D 数字孪生办公室实训空间！
 
 ---
 
@@ -123,6 +123,29 @@
 - **纯程序 8-Bit 鸣笛**：
   - 当收到其他玩家的空间发言广播时，前端合成器无延迟实时合成一个清脆温润的双音色琶音和弦 chime (A5 + E6 arpeggio: `880Hz` -> `1318.51Hz`)，无需载入外部音频包，实现纯算力音频渲染。
 
+### 12. 虚拟办公室技术事故、服务器离线抢修与应急指挥（Phase 13: Virtual Office Events, Server Outages, and Incident Command Room - 已完成）
+- **自愈式数据库表结构升级 & 兼容机制**：
+  - 在 SQLite `User` 表中追加了 `active_anomaly` (boolean)、`anomaly_cpu` (integer) 以及 `anomaly_status` (string) 三个全新的高可靠度异常跟踪字段。
+  - 在后端 `app/main.py` 的自愈启动拦截管道中，完美扩充了 `_self_heal_schema()` 执行链路。检测到字段缺失时自动在本地非生产环境执行 `ALTER TABLE` 升级，做到 100% 数据库零脚本零冲突自愈平滑升级。
+- **自定义故障注入与自愈诊断 API**：
+  - 设计了异常动作 schema `SpaceAnomaly` 以及全新的两组技术故障生命周期端点：
+    - `POST /space/anomaly/trigger`：人工/随机注入异常故障，自动将当前 CPU 利用率拉升至 `100%`，并将状态标记为 `overload`，同时利用 Python 异步套接字瞬时将异常状态全局广播（`ANOMALY_TRIGGER`）。
+    - `POST /space/anomaly/resolve`：获取玩家输入的重构脚本，在预置沙箱编译器中对代码进行语法分析与语义匹配。检测到玩家针对性编写了合法的 `CREATE INDEX` SQL 性能优化脚本、或符合高可用规范的 `try-except` 与 `rollback()` Python 故障回滚重试机制，则判定重构通过：将系统 CPU 利用率优雅归位至健康态 `12%`，更新状态为 `resolved`，向玩家发放 `+50 XP` 的丰厚实训经验值，并全局广播自愈消息（`ANOMALY_RESOLVED`）。
+- **Zustand 全局故障生命周期订阅与 WebSockets 广播响应**：
+  - 扩展前端 `spaceStore.ts` 注册了 `activeAnomaly` 核心故障状态机、以及 `triggerAnomaly`、`resolveAnomaly` 等网络业务原子动作。
+  - 升级 WebSocket 事件解包分发管道。在收到服务端推送的 `"ANOMALY_TRIGGER"` 时，无延迟启动纯程序红闪报警笛音，进入猩红紧急响应模式；收到 `"ANOMALY_RESOLVED"` 时，立即切换到金色庆典重大琶音和弦音效，全站复原正常状态。
+- **2D 孪生高拟真服务器应急机柜 & 雷达红闪警示**：
+  - 在 Archive Room (18, 15) 的核心机房主机柜上外挂了精细的像素粒子红色故障闪烁 Beacon 指示灯，并伴有规律的高频红白机红色故障发光。
+  - 只有当玩家走到机柜相邻 of 1 格以内时，底部的常态隐藏空间雷达会徐徐升起霓虹描边气泡，高亮显示 `⚠️ [Space] 故障抢修！` 操作引导，提示玩家物理靠近并与其进行量子连接。
+- **Web Audio API 8-Bit 实时扫频笛音与喜庆和弦 chimes**：
+  - 通过纯客户端 Web Audio 震荡器 (OscillatorNode) 构建了极富复古代入感的程序音效：
+    - **紧急事故扫频笛音 (`playAlarmSiren`)**：通过在 300ms 周期内利用指数频率扫描将锯齿波在 `330Hz` 与 `660Hz` 之间交替往复，仿真红白机硬件极速升降频报警声。
+    - **抢修成功大琶音 (`playCelebrateGold`)**：基于方波无延时发声，实时合成一个充满极客胜利质感的 C Major Triad 琶音序列。
+- **复古 CRT 绿幕终端抢修控制台 overlay**：
+  - 双离焦按键屏蔽：在玩家开启故障应急面板后，WASD 等地图位移输入被完美拦截，并为终端文本域聚焦，保证输入体验流畅，离焦或关闭时优雅归还物理运动控制权。
+  - **动态 CPU Sparkline 动效**：基于 SVG `<polyline>` 骨架和周期性随机 jitter 计算，在绿幕终端顶部实时绘制高精度的 CPU 10s 运行折线走势图。
+  - **打字机打码交互 & 拟真诊断编译管道**：为故障诊断配备了逐字渲染输出、并辅以高频 Sine 波敲击嘀嗒声的编译器日志。编译失败时触发全视图 `.console-screen-shake` 颤抖动效，编译成功则重置状态、加成 XP 并在全大厅降下金色庆典灯光。
+
 ---
 
 ## 🚀 未来迭代推进展望 (Next Steps & Future Roadmap)
@@ -133,5 +156,5 @@
    - 支持多人在同一个实训关卡中共同调试同一套 Pandas 代码、进行代码审查挑战并分享增益 XP。
 2. **更广博的技能图谱与实训沙盒扩展 (Constellation & Sandbox Depth - 规划中)**：
    - 将后端代码编译器扩展到更复杂的算法多文件重构测试、Docker 容器沙箱运行时隔离、以及高级 SQL 优化等深度业务实训场景。
-3. **空间虚拟事件与突发技术故障 (Virtual Office Events - 规划中)**：
-   - 增加随机的物理空间异常事件（如“数据库 CPU 满载”，伴有服务器机柜红灯爆闪），要求玩家快速组队前往对应工位或服务器，运用 RAG 文档检索知识协同合力编写解决脚本。
+3. **多端同步分布式状态存储与本地仿真网络代理 (Advanced Multi-Node Spatial Networking - 规划中)**：
+   - 实现更高级的多人多工位同时并发协同抢修，支持高并发锁和团队事件分布式原子操作。

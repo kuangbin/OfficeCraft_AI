@@ -59,6 +59,9 @@ def _self_heal_schema() -> None:
     users_columns = {
         "coord_x": "INTEGER DEFAULT 0",
         "coord_y": "INTEGER DEFAULT 0",
+        "active_anomaly": "VARCHAR",
+        "anomaly_cpu": "INTEGER DEFAULT 0",
+        "anomaly_status": "VARCHAR DEFAULT 'resolved'",
     }
     for column_name, column_type in users_columns.items():
       if column_name in users_existing:

@@ -112,6 +112,9 @@ export default function SpaceBoard() {
     localLastMessage,
     localLastMessageTime,
     sendChatMessage,
+    activeAnomaly,
+    triggerAnomaly,
+    resolveAnomaly,
   } = useSpaceStore();
 
   const { currentCareerId, totalXp, selectCareer, addXp } = useUserStore();
@@ -122,8 +125,16 @@ export default function SpaceBoard() {
   const lastMoveTimeRef = useRef<number>(0);
   const [activeZone, setActiveZone] = useState<string>('Lobby');
 
-  // Unified overlay screen state: lobby | quests | portfolio | community | sandbox | skills | null
-  const [activeOverlay, setActiveOverlay] = useState<'lobby' | 'quests' | 'portfolio' | 'community' | 'sandbox' | 'skills' | null>(null);
+  // Recovery terminal states (Phase 13)
+  const [cpuHistory, setCpuHistory] = useState<number[]>([]);
+  const [currentCpu, setCurrentCpu] = useState<number>(100);
+  const [recoveryScript, setRecoveryScript] = useState<string>('');
+  const [terminalOutput, setTerminalOutput] = useState<string[]>([]);
+  const [isRecoveryCompiling, setIsRecoveryCompiling] = useState<boolean>(false);
+  const [isConsoleShaking, setIsConsoleShaking] = useState<boolean>(false);
+
+  // Unified overlay screen state: lobby | quests | portfolio | community | sandbox | skills | recovery | null
+  const [activeOverlay, setActiveOverlay] = useState<'lobby' | 'quests' | 'portfolio' | 'community' | 'sandbox' | 'skills' | 'recovery' | null>(null);
 
   // Controls collapsible HUD panels
   const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(false);
@@ -358,6 +369,39 @@ export default function SpaceBoard() {
     }
   }, [chatMessages]);
 
+  // Recovery console CPU simulator logic (Phase 13)
+  useEffect(() => {
+    if (activeOverlay !== 'recovery') {
+      setCpuHistory([]);
+      setCurrentCpu(100);
+      setTerminalOutput([
+        'SYSTEM BOOT SECTOR: STATUS OK',
+        'MAIN DATA ACCESS LAYER: OFFLINE (SERVER CONGESTION)',
+        'CPU LOAD STATUS: 100% UNSTABLE',
+        'ANALYSIS: Database index missing or connections blocking socket queue.',
+        'INSTRUCTIONS: Please write a CREATE INDEX script to resolve order latency,',
+        'or construct a Python Exception rollback block to recover core engine transactions.'
+      ]);
+      return;
+    }
+
+    const interval = setInterval(() => {
+      const targetBase = activeAnomaly ? 99 : 12;
+      const jitter = Math.random() * 1.8 - 0.9;
+      const nextCpu = Math.max(0, Math.min(100, parseFloat((targetBase + jitter).toFixed(1))));
+      setCurrentCpu(nextCpu);
+      setCpuHistory((prev) => {
+        const nextHist = [...prev, nextCpu];
+        if (nextHist.length > 25) {
+          nextHist.shift();
+        }
+        return nextHist;
+      });
+    }, 300);
+
+    return () => clearInterval(interval);
+  }, [activeOverlay, activeAnomaly]);
+
   // Handle Keyboard Inputs
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
@@ -434,7 +478,11 @@ export default function SpaceBoard() {
             return;
           }
           if (isNearSkillTerminal) {
-            openOverlay('skills');
+            if (activeAnomaly) {
+              openOverlay('recovery');
+            } else {
+              openOverlay('skills');
+            }
             return;
           }
           if (interactiveNpcId) {
@@ -464,7 +512,7 @@ export default function SpaceBoard() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [movePlayer, interactiveNpcId, isAdjacentToTable, isNearLobbyDesk, isNearDevWorkstation, isNearArchiveBookshelf, isNearSkillTerminal, activeChatNpc]);
 
-  const openOverlay = (overlayType: 'lobby' | 'quests' | 'portfolio' | 'community' | 'sandbox' | 'skills') => {
+  const openOverlay = (overlayType: 'lobby' | 'quests' | 'portfolio' | 'community' | 'sandbox' | 'skills' | 'recovery') => {
     audioManager.playOpen();
     setActiveOverlay(overlayType);
     if (overlayType === 'skills') {
@@ -797,6 +845,16 @@ export default function SpaceBoard() {
   return (
     <div className={`w-screen h-screen flex flex-col xl:flex-row gap-4 justify-between items-center relative select-none p-4 ${screenShake ? 'console-screen-shake' : ''}`}>
       
+      {/* Emergency Alert Bar (Phase 13) */}
+      {activeAnomaly && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-40 w-[90%] max-w-xl animate-bounce pointer-events-none">
+          <div className="bg-red-950/90 backdrop-blur-md border-2 border-red-600 px-4 py-2.5 rounded-lg shadow-[0_0_25px_rgba(239,68,68,0.5)] text-center text-[10px] font-mono font-bold text-red-200">
+            <span className="text-red-500 mr-2">🚨 [CRITICAL P0 EVENT]</span>
+            警告：机房核心数据库遭受 P0 级故障（CPU 100% 满载），系统濒临崩溃，请立刻前往机房 (18, 15) 终端抢修！
+          </div>
+        </div>
+      )}
+
       {/* ================== FLOATING HUD PANELS ================== */}
 
       {/* 1. TOP MENU CAPSULE */}
@@ -831,6 +889,28 @@ export default function SpaceBoard() {
             <div className="text-xs font-bold text-purple-400 leading-tight">Lvl {Math.floor(totalXp / 100) + 1}</div>
           </div>
         </div>
+
+        <div className="w-[1px] h-6 bg-slate-800" />
+
+        {/* Trigger Outage Debug Button */}
+        <button
+          onClick={async () => {
+            try {
+              await triggerAnomaly();
+            } catch (err) {
+              console.error(err);
+            }
+          }}
+          disabled={!!activeAnomaly}
+          className={`px-3.5 py-1 font-mono text-[9px] font-bold rounded-full border transition-all duration-200 ${
+            activeAnomaly
+              ? 'bg-red-950/60 border-red-700/80 text-red-400 cursor-not-allowed animate-pulse'
+              : 'bg-amber-950/45 hover:bg-amber-900/60 border-amber-700/60 text-amber-300 active:scale-95'
+          }`}
+          title="点击模拟核心数据库 CPU 100% 满载故障"
+        >
+          {activeAnomaly ? '🚨 故障恢复中' : '⚠️ 模拟数据库故障'}
+        </button>
 
         <div className="w-[1px] h-6 bg-slate-800" />
 
@@ -1320,43 +1400,49 @@ export default function SpaceBoard() {
 
             {/* Interactive Skill Matrix Server Terminal */}
             <div
-              onClick={() => openOverlay('skills')}
-              className="absolute top-0 left-0 w-[32px] h-[32px] pixel-server-rack hover:scale-105 active:scale-95 transition-all duration-100 flex flex-col items-center justify-between p-[2px] cursor-pointer z-20 group"
+              onClick={() => activeAnomaly ? openOverlay('recovery') : openOverlay('skills')}
+              className={`absolute top-0 left-0 w-[32px] h-[32px] hover:scale-105 active:scale-95 transition-all duration-100 flex flex-col items-center justify-between p-[2px] cursor-pointer z-20 group ${
+                activeAnomaly ? 'pixel-server-rack-anomaly' : 'pixel-server-rack'
+              }`}
               style={{ transform: `translate3d(${SKILL_TERMINAL.coords.x * 32}px, ${SKILL_TERMINAL.coords.y * 32}px, 0)` }}
             >
               {/* Floating Proximity Prompt Bubble */}
               {isNearSkillTerminal && (
                 <div className="absolute bottom-8 flex flex-col items-center animate-bounce z-30">
-                  <div className="bg-slate-900/95 border-2 border-cyan-500 text-[9px] font-bold text-cyan-300 font-mono py-1 px-1.5 rounded whitespace-nowrap shadow-md">
-                    [Space] 技能星图
+                  <div className={`bg-slate-900/95 border-2 text-[9px] font-bold font-mono py-1 px-1.5 rounded whitespace-nowrap shadow-md ${
+                    activeAnomaly ? 'border-red-500 text-red-300' : 'border-cyan-500 text-cyan-300'
+                  }`}>
+                    {activeAnomaly ? '[Space] 故障抢修！' : '[Space] 技能星图'}
                   </div>
-                  <div className="w-1.5 h-1.5 bg-cyan-500 rotate-45 -mt-1 border-r border-b border-cyan-500" />
+                  <div className={`w-1.5 h-1.5 rotate-45 -mt-1 border-r border-b ${
+                    activeAnomaly ? 'bg-red-500 border-red-500 animate-pulse' : 'bg-cyan-500 border-cyan-500'
+                  }`} />
                 </div>
               )}
 
               {/* Pulsing LEDs indicators */}
               <div className="w-[28px] h-full flex flex-col justify-around py-0.5 pointer-events-none">
                 <div className="h-[2px] w-full bg-slate-950 flex gap-[2px] px-[1px]">
-                  <div className="w-[3px] h-full bg-cyan-400 animate-pulse" />
-                  <div className="w-[3px] h-full bg-cyan-400/50" />
+                  <div className={`w-[3px] h-full animate-pulse ${activeAnomaly ? 'bg-red-500 shadow-[0_0_4px_#ef4444]' : 'bg-cyan-400'}`} />
+                  <div className={`w-[3px] h-full ${activeAnomaly ? 'bg-red-500/50' : 'bg-cyan-400/50'}`} />
                   <div className="w-[3px] h-full bg-slate-800" />
-                  <div className="w-[3px] h-full bg-emerald-500 animate-pulse delay-300" />
+                  <div className={`w-[3px] h-full animate-pulse delay-300 ${activeAnomaly ? 'bg-red-500 shadow-[0_0_4px_#ef4444]' : 'bg-emerald-500'}`} />
                 </div>
                 <div className="h-[2px] w-full bg-slate-950 flex gap-[2px] px-[1px]">
                   <div className="w-[3px] h-full bg-slate-800" />
-                  <div className="w-[3px] h-full bg-cyan-400 animate-pulse delay-100" />
-                  <div className="w-[3px] h-full bg-emerald-500 animate-pulse delay-500" />
+                  <div className={`w-[3px] h-full animate-pulse delay-100 ${activeAnomaly ? 'bg-red-500 shadow-[0_0_4px_#ef4444]' : 'bg-cyan-400'}`} />
+                  <div className={`w-[3px] h-full animate-pulse delay-500 ${activeAnomaly ? 'bg-red-500 shadow-[0_0_4px_#ef4444]' : 'bg-emerald-500'}`} />
                   <div className="w-[3px] h-full bg-slate-800" />
                 </div>
                 <div className="h-[2px] w-full bg-slate-950 flex gap-[2px] px-[1px]">
-                  <div className="w-[3px] h-full bg-cyan-400 animate-pulse delay-200" />
+                  <div className={`w-[3px] h-full animate-pulse delay-200 ${activeAnomaly ? 'bg-red-500 shadow-[0_0_4px_#ef4444]' : 'bg-cyan-400'}`} />
                   <div className="w-[3px] h-full bg-slate-800" />
-                  <div className="w-[3px] h-full bg-cyan-400 animate-pulse delay-700" />
-                  <div className="w-[3px] h-full bg-emerald-500 animate-pulse delay-150" />
+                  <div className={`w-[3px] h-full animate-pulse delay-700 ${activeAnomaly ? 'bg-red-500 shadow-[0_0_4px_#ef4444]' : 'bg-cyan-400'}`} />
+                  <div className={`w-[3px] h-full animate-pulse delay-150 ${activeAnomaly ? 'bg-red-500 shadow-[0_0_4px_#ef4444]' : 'bg-emerald-500'}`} />
                 </div>
                 <div className="h-[2px] w-full bg-slate-950 flex gap-[2px] px-[1px]">
-                  <div className="w-[3px] h-full bg-emerald-500 animate-pulse delay-400" />
-                  <div className="w-[3px] h-full bg-cyan-400 animate-pulse" />
+                  <div className={`w-[3px] h-full animate-pulse delay-400 ${activeAnomaly ? 'bg-red-500 shadow-[0_0_4px_#ef4444]' : 'bg-emerald-500'}`} />
+                  <div className={`w-[3px] h-full animate-pulse ${activeAnomaly ? 'bg-red-500 shadow-[0_0_4px_#ef4444]' : 'bg-cyan-400'}`} />
                   <div className="w-[3px] h-full bg-slate-800" />
                   <div className="w-[3px] h-full bg-slate-800" />
                 </div>
@@ -1364,7 +1450,7 @@ export default function SpaceBoard() {
 
               {/* Hover Tooltip */}
               <div className="absolute top-8 scale-0 group-hover:scale-100 transition-all bg-slate-900/90 border border-slate-700 text-[9px] text-slate-300 py-0.5 px-2 rounded whitespace-nowrap pointer-events-none z-30">
-                {SKILL_TERMINAL.name}
+                {activeAnomaly ? '🚨 核心数据库 core_db_cpu_overload 严重过载' : SKILL_TERMINAL.name}
               </div>
             </div>
 
@@ -1542,6 +1628,9 @@ export default function SpaceBoard() {
             />
 
             {/* Ambient Overlays (Prompt-to-Light) */}
+            {activeAnomaly && (
+              <div className="ambient-theme-alert-red" />
+            )}
             {ambientTheme === 'quiet-blue' && (
               <div className="absolute inset-0 bg-blue-950/15 mix-blend-color-dodge backdrop-brightness-95 pointer-events-none z-10 animate-pulse border-8 border-cyan-950/40" />
             )}
@@ -1891,6 +1980,196 @@ export default function SpaceBoard() {
               </div>
               <div className="font-mono text-cyan-300">
                 当前星图进度: {skills.filter(s => s.unlocked).length} / {skills.length} 节点已通电
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 7. SERVER RECOVERY CONSOLE OVERLAY (Phase 13) */}
+      {activeOverlay === 'recovery' && (
+        <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md flex items-center justify-center z-50 p-4 font-mono select-none animate-fade-in pointer-events-auto animate-fade-in">
+          <div className={`w-full max-w-4xl h-[85vh] bg-slate-950/90 border-4 border-red-500 shadow-[0_0_40px_rgba(239,68,68,0.4)] p-6 relative flex flex-col gap-4 rounded-xl ${
+            isConsoleShaking ? 'console-screen-shake' : ''
+          }`}>
+            {/* Header */}
+            <div className="border-b-2 border-red-950 pb-3 flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl animate-pulse">🚨</span>
+                <div>
+                  <span className="text-[9px] font-bold text-red-500 tracking-wider uppercase">CORE SYSTEM FAILURE SECTOR DECK</span>
+                  <h3 className="pixel-title text-base font-bold text-slate-100">机房数据库核心重构终端 (Server Recovery Terminal)</h3>
+                </div>
+              </div>
+              <button 
+                onClick={closeOverlay} 
+                className="text-slate-400 hover:text-red-400 border border-slate-800 bg-slate-950 hover:border-red-500/50 px-3 py-1 text-xs transition-colors duration-200 rounded"
+              >
+                [关闭 Esc]
+              </button>
+            </div>
+
+            {/* Main console content */}
+            <div className="flex-1 flex flex-col md:flex-row gap-4 min-h-0">
+              {/* Left Column: Stats & Logs */}
+              <div className="w-full md:w-[320px] flex flex-col gap-4">
+                {/* CPU load display card */}
+                <div className="bg-slate-950/70 border border-red-900/50 rounded-lg p-4 flex flex-col gap-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-bold text-red-400">🔥 核心数据库 CPU 负载</span>
+                    <span className={`text-xs font-mono font-bold px-1.5 py-0.5 rounded ${
+                      currentCpu > 90 ? 'bg-red-950/60 text-red-500 animate-pulse' : 'bg-emerald-950/60 text-emerald-400'
+                    }`}>
+                      {currentCpu > 90 ? 'SEVERE OVERLOAD' : 'NOMINAL'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-baseline gap-1">
+                    <span className={`text-4xl font-bold font-mono tracking-tighter ${
+                      currentCpu > 90 ? 'text-red-500' : 'text-emerald-400'
+                    }`}>
+                      {currentCpu.toFixed(1)}
+                    </span>
+                    <span className="text-sm text-slate-500">%</span>
+                  </div>
+
+                  {/* SVG Jittery Line Graph */}
+                  <div className="h-[60px] w-full bg-slate-950/80 border border-slate-900 rounded p-1 overflow-hidden relative">
+                    <div className="absolute inset-0 bg-scanlines opacity-10 pointer-events-none" />
+                    {cpuHistory.length > 1 ? (
+                      <svg className="w-full h-full" viewBox="0 0 240 60" preserveAspectRatio="none">
+                        <polyline
+                          fill="none"
+                          stroke={currentCpu > 90 ? '#ef4444' : '#10b981'}
+                          strokeWidth="2"
+                          points={cpuHistory.map((val, idx) => {
+                            const x = (idx / Math.max(1, cpuHistory.length - 1)) * 240;
+                            const y = 55 - (val / 100) * 50;
+                            return `${x},${y}`;
+                          }).join(' ')}
+                        />
+                      </svg>
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-600">
+                        正在初始化波形...
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Problems and Diagnostic logs */}
+                <div className="flex-1 bg-slate-950/70 border border-slate-900 rounded-lg p-4 flex flex-col gap-2 overflow-hidden">
+                  <span className="text-[10px] font-bold text-slate-500 tracking-wider">📋 诊断输出 (LOGS)</span>
+                  <div className="flex-1 overflow-y-auto scrollbar-thin flex flex-col gap-1.5 text-[10.5px] font-mono leading-relaxed text-slate-400 animate-pulse">
+                    {terminalOutput.map((log, idx) => {
+                      let color = 'text-slate-400';
+                      if (log.includes('WARNING') || log.includes('UNSTABLE')) color = 'text-red-400 font-bold';
+                      else if (log.includes('SUCCESS') || log.includes('OK') || log.includes('RESTORED')) color = 'text-emerald-400';
+                      else if (log.includes('INSTRUCTIONS') || log.includes('RAG')) color = 'text-cyan-400';
+                      
+                      return (
+                        <div key={idx} className={`${color} break-all`}>
+                          &gt; {log}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column: Editor & Sandbox Submit */}
+              <div className="flex-1 flex flex-col gap-3">
+                <div className="flex-1 flex flex-col bg-slate-950/85 border border-slate-900 rounded-lg overflow-hidden relative">
+                  {/* Editor Header */}
+                  <div className="bg-slate-950/90 border-b border-slate-900 px-4 py-2 flex justify-between items-center text-xs">
+                    <span className="text-slate-400 font-bold">🛠️ 紧急安全重构编辑器 (sql_python_sandbox)</span>
+                    <span className="text-[9px] text-slate-600 uppercase font-mono font-bold">UTF-8 / Case-Insensitive</span>
+                  </div>
+
+                  {/* Textarea with retro line numbers design */}
+                  <div className="flex-1 flex relative font-mono text-[12px] bg-slate-950">
+                    {/* Line numbers dummy sidebar */}
+                    <div className="w-10 bg-slate-950/60 border-r border-slate-900/60 text-slate-700 text-right pr-2 py-3 select-none flex flex-col gap-[3px]">
+                      {Array.from({ length: 12 }).map((_, i) => (
+                        <span key={i}>{i + 1}</span>
+                      ))}
+                    </div>
+
+                    {/* Actual textarea input */}
+                    <textarea
+                      value={recoveryScript}
+                      onChange={(e) => setRecoveryScript(e.target.value)}
+                      placeholder={
+                        `-- 示例 1: 创建缺失索引以解决 CPU 过载\n-- CREATE INDEX idx_user ON orders(user_id);\n\n# 示例 2: 使用 try-except 与 rollback 机制防止连接超时死锁\ntry:\n    db.commit()\nexcept Exception as e:\n    db.rollback()\n    raise e`
+                      }
+                      className="flex-1 h-full bg-transparent text-slate-200 p-3 outline-none resize-none focus:ring-0 placeholder-slate-700 leading-[1.3] overflow-y-auto"
+                      style={{ caretColor: '#ef4444' }}
+                    />
+                  </div>
+                </div>
+
+                {/* Footer Controls */}
+                <div className="flex justify-between items-center gap-4 bg-slate-900/20 p-3 border border-slate-900 rounded-lg">
+                  <div className="text-[10px] text-slate-500 leading-snug">
+                    <p>💡 <span className="text-cyan-400">RAG 书架提示</span>: 检索 \`software_design_rules\` 书架以学习异常重试与数据事务规范。</p>
+                    <p className="mt-0.5">💡 SQL 重写或 Python 异常回滚可以令 CPU 降至 <span className="text-emerald-400 font-bold">12%</span> 稳态，并获得 <span className="text-amber-400 font-bold">+50 XP</span>！</p>
+                  </div>
+
+                  <button
+                    onClick={async () => {
+                      if (isRecoveryCompiling || !recoveryScript.trim()) return;
+                      setIsRecoveryCompiling(true);
+                      setTerminalOutput(prev => [...prev, '>>> EVALUATION PIPELINE RUNNING...', '>>> RUNNING SYNTAX & SEMANTIC STATIC CHECKS...']);
+                      audioManager.playTypewriter();
+
+                      try {
+                        const response = await resolveAnomaly(recoveryScript);
+                        // Synthesize compilation typewriter sounds
+                        setTimeout(() => {
+                          if (response.status === 'success') {
+                            setTerminalOutput(prev => [
+                              ...prev,
+                              '>>> COMPILER RESULT: SUCCESS',
+                              `>>> FEEDBACK: ${response.feedback}`,
+                              '>>> DB ENGINE RESTORED TO NOMINAL STATE.',
+                              '>>> EXCELLENT RECOVERY WORK! +50 XP AWARDED.'
+                            ]);
+                            setIsRecoveryCompiling(false);
+                          } else {
+                            setTerminalOutput(prev => [
+                              ...prev,
+                              '>>> COMPILER WARNING: FAILED STATIC CHECKS',
+                              `>>> ERROR LOG: ${response.feedback}`,
+                              '>>> REMEDY WORK NEEDED.'
+                            ]);
+                            setIsConsoleShaking(true);
+                            audioManager.playClose(); // alert warning sound
+                            setTimeout(() => setIsConsoleShaking(false), 500);
+                            setIsRecoveryCompiling(false);
+                          }
+                        }, 1200);
+                      } catch (err) {
+                        setTerminalOutput(prev => [...prev, '>>> CONNECTION ERROR: UNABLE TO CONTACT SERVER COMPILER NODE.']);
+                        setIsRecoveryCompiling(false);
+                      }
+                    }}
+                    disabled={isRecoveryCompiling || !recoveryScript.trim()}
+                    className={`px-5 py-2.5 font-bold rounded-lg border transition-all duration-200 select-none text-xs flex items-center gap-2 ${
+                      isRecoveryCompiling || !recoveryScript.trim()
+                        ? 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed'
+                        : 'bg-red-950/60 hover:bg-red-900/60 border-red-500/80 hover:border-red-400 text-red-200 active:scale-95'
+                    }`}
+                  >
+                    {isRecoveryCompiling ? (
+                      <>
+                        <span className="w-3 h-3 border-2 border-red-500 border-t-transparent rounded-full animate-spin" />
+                        诊断检查中...
+                      </>
+                    ) : (
+                      <>⚡ 运行重构检查</>
+                    )}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

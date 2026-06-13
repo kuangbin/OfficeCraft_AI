@@ -444,6 +444,21 @@ export const api = {
       fallbackAllowed: false,
     });
   },
+
+  async triggerSpaceAnomaly(signal?: AbortSignal): Promise<SpaceAnomaly> {
+    return request<SpaceAnomaly>('/api/v1/space/anomaly/trigger', {
+      method: 'POST',
+      signal,
+    });
+  },
+
+  async resolveSpaceAnomaly(script: string, signal?: AbortSignal): Promise<SpaceAnomalyResolveResponse> {
+    return request<SpaceAnomalyResolveResponse>('/api/v1/space/anomaly/resolve', {
+      method: 'POST',
+      body: JSON.stringify({ script }),
+      signal,
+    });
+  },
 };
 
 export async function streamTeamMeeting(
@@ -627,12 +642,27 @@ export interface SpaceConflict {
   description: string;
 }
 
+export interface SpaceAnomaly {
+  anomaly_id: string;
+  title: string;
+  description: string;
+  cpu_load: number;
+  status: string;
+}
+
+export interface SpaceAnomalyResolveResponse {
+  status: string;
+  feedback: string;
+  xp_gained: number;
+}
+
 export interface SpaceStateResponse {
   player_coords: SpaceCoords;
   ambient_theme: string;
   map_assets_url: string;
   active_mission: SpaceActiveMission | null;
   unresolved_conflict: SpaceConflict | null;
+  active_anomaly: SpaceAnomaly | null;
 }
 
 export interface SpaceMoveResponse {

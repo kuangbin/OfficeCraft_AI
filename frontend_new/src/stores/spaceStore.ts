@@ -1,9 +1,10 @@
 'use client';
 
 import { create } from 'zustand';
-import { api, SpaceCoords, SpaceActiveMission, SpaceConflict, SpaceStateResponse } from '@/services/apiClient';
+import { api, SpaceCoords, SpaceActiveMission, SpaceConflict, SpaceStateResponse, SpaceAnomaly } from '@/services/apiClient';
 import { audioManager } from '@/utils/audioManager';
 import { getPlayerId } from '@/services/identity';
+import { useUserStore } from '@/stores/userStore';
 
 export interface RemotePlayerState {
   id: string;
@@ -43,6 +44,9 @@ interface SpaceStore {
   facingDirection: 'down' | 'up' | 'left' | 'right';
   isWalking: boolean;
 
+  // Anomaly state
+  activeAnomaly: SpaceAnomaly | null;
+
   // Multiplayer fields
   remotePlayers: Record<string, RemotePlayerState>;
   socket: WebSocket | null;
@@ -57,6 +61,8 @@ interface SpaceStore {
   movePlayer: (dx: number, dy: number) => Promise<string | null>;
   setAmbientTheme: (theme: string) => void;
   triggerBookcaseSearch: (bookcaseId: string, query: string) => Promise<any>;
+  triggerAnomaly: () => Promise<void>;
+  resolveAnomaly: (script: string) => Promise<{ status: string; feedback: string; xp_gained: number }>;
 
   // Multiplayer actions
   connectWebSocket: () => void;
@@ -136,6 +142,7 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
   isLoading: false,
   facingDirection: 'down',
   isWalking: false,
+  activeAnomaly: null,
   remotePlayers: {},
   socket: null,
   chatMessages: [],
@@ -171,6 +178,7 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
         activeMission: state.active_mission || null,
         unresolvedConflict: state.unresolved_conflict || null,
         interactiveNpcId: initialNpcId,
+        activeAnomaly: state.active_anomaly || null,
       });
     } catch (error) {
       console.warn('Failed to sync spatial state from backend:', error);
@@ -259,6 +267,39 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
       return response;
     } catch (error) {
       console.error(`Failed bookcase RAG search for ${bookcaseId}:`, error);
+      throw error;
+    }
+  },
+
+  triggerAnomaly: async () => {
+    try {
+      const anomaly = await api.triggerSpaceAnomaly();
+      set({
+        activeAnomaly: anomaly,
+        ambientTheme: 'alert-red',
+      });
+      audioManager.playAlarmSiren();
+    } catch (error) {
+      console.error('Failed to trigger space anomaly:', error);
+      throw error;
+    }
+  },
+
+  resolveAnomaly: async (script: string) => {
+    try {
+      const response = await api.resolveSpaceAnomaly(script);
+      if (response.status === 'success') {
+        set({
+          activeAnomaly: null,
+          ambientTheme: 'default',
+        });
+        audioManager.playCelebrateGold();
+        // Sync user state to update XP
+        await useUserStore.getState().syncFromBackend();
+      }
+      return response;
+    } catch (error) {
+      console.error('Failed to resolve space anomaly:', error);
       throw error;
     }
   },
@@ -358,6 +399,20 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
             delete nextRemotes[player_id];
             return { remotePlayers: nextRemotes };
           });
+        } else if (type === 'ANOMALY_TRIGGER') {
+          const { anomaly } = data;
+          audioManager.playAlarmSiren();
+          set({
+            activeAnomaly: anomaly,
+            ambientTheme: 'alert-red',
+          });
+        } else if (type === 'ANOMALY_RESOLVED') {
+          audioManager.playCelebrateGold();
+          set({
+            activeAnomaly: null,
+            ambientTheme: 'default',
+          });
+          useUserStore.getState().syncFromBackend().catch(console.warn);
         }
       } catch (err) {
         console.warn('Failed to parse WebSocket message:', err);
