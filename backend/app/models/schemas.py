@@ -363,3 +363,42 @@ class SpaceAnomalyResolveResponse(BaseModel):
   xp_gained: int
 
 
+class CoopSubmitRequest(BaseModel):
+  """Request schema for submitting code for review."""
+
+  title: str
+  code_content: str
+  language: str = "python"
+
+
+class CoopReviewRequest(BaseModel):
+  """Request schema for submitting a peer review feedback."""
+
+  review_id: str
+  status: Literal["approved", "rejected"]
+  feedback: str
+
+
+class CoopReviewResponse(BaseModel):
+  """Response schema representing a single co-op code review request."""
+
+  id: str
+  user_id: str
+  title: str
+  code_content: str
+  language: str
+  status: str
+  reviewer_id: str | None = None
+  feedback: str | None = None
+  created_at: str | None = None
+
+
+class CoopActionResponse(BaseModel):
+  """Standard action outcome response for co-op workflows."""
+
+  status: str
+  message: str
+  xp_gained: int
+
+
+

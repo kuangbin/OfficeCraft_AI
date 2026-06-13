@@ -333,6 +333,61 @@ class AudioManager {
   }
 
   /**
+   * Synthesizes a rapid, delightful dual-tone 8-bit digital chirp for peer review alerts.
+   */
+  public playPeerReviewAlert() {
+    this.initContext();
+    if (this.isMuted || !this.ctx || this.volume <= 0) return;
+
+    const now = this.ctx.currentTime;
+    const frequencies = [440, 554.37]; // A4 and C#5
+    frequencies.forEach((freq) => {
+      const osc = this.ctx!.createOscillator();
+      const gainNode = this.ctx!.createGain();
+
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, now);
+
+      gainNode.gain.setValueAtTime(0.06 * this.volume, now);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+
+      osc.connect(gainNode);
+      gainNode.connect(this.ctx!.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.25);
+    });
+  }
+
+  /**
+   * Synthesizes an arpeggio sequence representing successful peer review approval.
+   */
+  public playPeerReviewApproved() {
+    this.initContext();
+    if (this.isMuted || !this.ctx || this.volume <= 0) return;
+
+    const now = this.ctx.currentTime;
+    const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6
+    notes.forEach((freq, idx) => {
+      const osc = this.ctx!.createOscillator();
+      const gainNode = this.ctx!.createGain();
+      const startDelay = idx * 0.05;
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now + startDelay);
+
+      gainNode.gain.setValueAtTime(0.05 * this.volume, now + startDelay);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, now + startDelay + 0.2);
+
+      osc.connect(gainNode);
+      gainNode.connect(this.ctx!.destination);
+
+      osc.start(now + startDelay);
+      osc.stop(now + startDelay + 0.2);
+    });
+  }
+
+  /**
    * Plays the celebrate gold theme arpeggio.
    */
   public playCelebrateGold() {

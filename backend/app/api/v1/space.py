@@ -1,7 +1,7 @@
 """API endpoints for spatial state sync, movement, and bookcase RAG search."""
 
 import logging
-from fastapi import APIRouter, Body, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Body, Depends, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user_id
@@ -351,6 +351,223 @@ async def resolve_anomaly_endpoint(
       feedback=feedback,
       xp_gained=xp_gained,
   )
+
+
+@router.post(
+    "/coop/submit",
+    summary="提交代码发起同业评审(Peer Review)",
+    response_model=schemas.CoopReviewResponse,
+)
+async def submit_coop_review(
+    background_tasks: BackgroundTasks,
+    request: schemas.CoopSubmitRequest = Body(...),
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> schemas.CoopReviewResponse:
+  """Saves a code review request, broadcasts it to other players, and triggers NPC autopilot if alone."""
+  import uuid
+  from datetime import datetime
+  from app.models.orm import CoopReview
+
+  review_id = str(uuid.uuid4())
+  review_row = CoopReview(
+      id=review_id,
+      user_id=user_id,
+      title=request.title,
+      code_content=request.code_content,
+      language=request.language,
+      status="pending",
+      created_at=datetime.utcnow(),
+  )
+  db.add(review_row)
+  db.commit()
+  db.refresh(review_row)
+
+  # Broadcast to WebSocket
+  try:
+    await manager.broadcast({
+        "type": "COOP_REVIEW_CREATED",
+        "review": {
+            "id": review_id,
+            "user_id": user_id,
+            "title": request.title,
+            "code_content": request.code_content,
+            "language": request.language,
+            "status": "pending",
+            "created_at": str(review_row.created_at)
+        }
+    })
+  except Exception as e:
+    logger.warning("Failed to broadcast coop review trigger: %s", e)
+
+  # NPC Autopilot Fallback: If only this player is online (active connections <= 1), schedule NPC review
+  if len(manager.active_connections) <= 1:
+    background_tasks.add_task(simulate_npc_review, review_id, user_id)
+
+  return schemas.CoopReviewResponse(
+      id=review_row.id,
+      user_id=review_row.user_id,
+      title=review_row.title,
+      code_content=review_row.code_content,
+      language=review_row.language,
+      status=review_row.status,
+      created_at=str(review_row.created_at),
+  )
+
+
+@router.get(
+    "/coop/pending",
+    summary="获取所有待评审的代码列表",
+    response_model=list[schemas.CoopReviewResponse],
+)
+async def get_pending_coop_reviews(
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> list[schemas.CoopReviewResponse]:
+  """Retrieves all active pending code review requests."""
+  from app.models.orm import CoopReview
+
+  pending = db.query(CoopReview).filter_by(status="pending").order_by(CoopReview.created_at.desc()).all()
+  return [
+      schemas.CoopReviewResponse(
+          id=r.id,
+          user_id=r.user_id,
+          title=r.title,
+          code_content=r.code_content,
+          language=r.language,
+          status=r.status,
+          reviewer_id=r.reviewer_id,
+          feedback=r.feedback,
+          created_at=str(r.created_at),
+      )
+      for r in pending
+  ]
+
+
+@router.post(
+    "/coop/review",
+    summary="对同事提交的请求进行人工同业评审(Approve/Reject)",
+    response_model=schemas.CoopActionResponse,
+)
+async def submit_peer_review(
+    request: schemas.CoopReviewRequest = Body(...),
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> schemas.CoopActionResponse:
+  """Saves approval or rejection status, distributes XP, and broadcasts update."""
+  from app.models.orm import CoopReview, User
+
+  review = db.query(CoopReview).filter_by(id=request.review_id).first()
+  if not review:
+    raise HTTPException(status_code=404, detail="Review request not found.")
+
+  if review.user_id == user_id:
+    raise HTTPException(status_code=400, detail="你不能评审自己提交的代码！")
+
+  if review.status != "pending":
+    raise HTTPException(status_code=400, detail="该请求已被完成评审，无法重复提交。")
+
+  review.status = request.status
+  review.reviewer_id = user_id
+  review.feedback = request.feedback
+
+  # Distribute XP on approval
+  xp_gained = 0
+  if request.status == "approved":
+    xp_gained = 30
+    author = db.query(User).filter_by(id=review.user_id).first()
+    if author:
+      author.total_xp += 30  # Author gets 30 XP
+
+    reviewer = db.query(User).filter_by(id=user_id).first()
+    if reviewer:
+      reviewer.total_xp += 20  # Reviewer gets 20 XP
+
+  db.commit()
+
+  # Broadcast resolution via WebSocket
+  try:
+    await manager.broadcast({
+        "type": "COOP_REVIEW_RESOLVED",
+        "review_id": review.id,
+        "status": request.status,
+        "reviewer_id": user_id,
+        "feedback": request.feedback,
+        "xp_gained": xp_gained,
+        "author_id": review.user_id
+    })
+  except Exception as e:
+    logger.warning("Failed to broadcast review resolution: %s", e)
+
+  return schemas.CoopActionResponse(
+      status="success",
+      message=f"代码评审完成！已标记为 {request.status}。" + (f" 你获得了 +20 XP，作者获得了 +30 XP！" if request.status == "approved" else ""),
+      xp_gained=20 if request.status == "approved" else 0,
+  )
+
+
+async def simulate_npc_review(review_id: str, author_id: str):
+  """Asynchronously simulates an AI mentor checking and commenting on the review request."""
+  import asyncio
+  from app.db.session import session_local
+  from app.models.orm import CoopReview, User
+
+  await asyncio.sleep(6)
+  db = session_local()
+  try:
+    review = db.query(CoopReview).filter_by(id=review_id, status="pending").first()
+    if not review:
+      return
+
+    code_lower = review.code_content.lower()
+    if len(code_lower.strip()) < 10:
+      status = "rejected"
+      feedback = "❌ 警告：提交的代码体量过短。请务必编写完整的方法签名、主体逻辑和相关的错误捕获后再提审！"
+      reviewer_id = "npc_ling"
+      xp_gained = 0
+    elif any(kw in code_lower for kw in ["try", "except", "index", "def ", "import", "with "]):
+      status = "approved"
+      if review.language == "sql":
+        feedback = "✓ Gao Ling (Tech Lead) 评审意见：索引优化策略相当到位。在高并发关联查询场景下避免了 full-table scan，能有效缓解 CPU overload。审核通过！"
+      else:
+        feedback = "✓ Gao Ling (Tech Lead) 评审意见：Python 代码复用度和异常隔离做得很漂亮。充分考虑了 Connection Timeout 与 Rollback 逻辑，满足线上高可用发布标准！"
+      reviewer_id = "npc_ling"
+      xp_gained = 30
+    else:
+      status = "approved"
+      feedback = "✓ Zheng Ying (Senior Analyst) 评审意见：数据切片及特征工程逻辑满足分析要求。运行性能优越，代码优雅！审核通过。"
+      reviewer_id = "npc_ying"
+      xp_gained = 30
+
+    review.status = status
+    review.reviewer_id = reviewer_id
+    review.feedback = feedback
+
+    if status == "approved":
+      author = db.query(User).filter_by(id=author_id).first()
+      if author:
+        author.total_xp += xp_gained
+
+    db.commit()
+
+    # Broadcast resolution to WebSocket
+    try:
+      await manager.broadcast({
+          "type": "COOP_REVIEW_RESOLVED",
+          "review_id": review_id,
+          "status": status,
+          "reviewer_id": reviewer_id,
+          "feedback": feedback,
+          "xp_gained": xp_gained if status == "approved" else 0,
+          "author_id": author_id
+      })
+    except Exception as e:
+      logger.warning("Failed to broadcast NPC coop review resolution: %s", e)
+
+  except Exception as e:
+    logger.error("Error in simulate_npc_review task: %s", e)
+  finally:
+    db.close()
 
 
 class ConnectionManager:

@@ -459,6 +459,26 @@ export const api = {
       signal,
     });
   },
+
+  async submitCoopCode(title: string, codeContent: string, language: string, signal?: AbortSignal): Promise<CoopReview> {
+    return request<CoopReview>('/api/v1/space/coop/submit', {
+      method: 'POST',
+      body: JSON.stringify({ title, code_content: codeContent, language }),
+      signal,
+    });
+  },
+
+  async fetchPendingCoopReviews(signal?: AbortSignal): Promise<CoopReview[]> {
+    return request<CoopReview[]>('/api/v1/space/coop/pending', { signal });
+  },
+
+  async submitPeerReview(reviewId: string, status: 'approved' | 'rejected', feedback: string, signal?: AbortSignal): Promise<CoopActionResponse> {
+    return request<CoopActionResponse>('/api/v1/space/coop/review', {
+      method: 'POST',
+      body: JSON.stringify({ review_id: reviewId, status, feedback }),
+      signal,
+    });
+  },
 };
 
 export async function streamTeamMeeting(
@@ -695,4 +715,23 @@ export interface ArbitrationResponse {
   xp_gained: number;
   feedback: string;
 }
+
+export interface CoopReview {
+  id: string;
+  user_id: string;
+  title: string;
+  code_content: string;
+  language: string;
+  status: string;
+  reviewer_id?: string | null;
+  feedback?: string | null;
+  created_at?: string;
+}
+
+export interface CoopActionResponse {
+  status: string;
+  message: string;
+  xp_gained: number;
+}
+
 

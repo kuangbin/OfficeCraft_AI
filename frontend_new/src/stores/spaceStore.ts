@@ -1,7 +1,7 @@
 'use client';
 
 import { create } from 'zustand';
-import { api, SpaceCoords, SpaceActiveMission, SpaceConflict, SpaceStateResponse, SpaceAnomaly } from '@/services/apiClient';
+import { api, SpaceCoords, SpaceActiveMission, SpaceConflict, SpaceStateResponse, SpaceAnomaly, CoopReview, CoopActionResponse } from '@/services/apiClient';
 import { audioManager } from '@/utils/audioManager';
 import { getPlayerId } from '@/services/identity';
 import { useUserStore } from '@/stores/userStore';
@@ -56,6 +56,10 @@ interface SpaceStore {
   localLastMessage: string | null;
   localLastMessageTime: number | null;
 
+  // Co-op Peer Code Review state
+  pendingReviews: CoopReview[];
+  isCoopWhiteboardOpen: boolean;
+
   // Actions
   syncFromBackend: () => Promise<void>;
   movePlayer: (dx: number, dy: number) => Promise<string | null>;
@@ -69,6 +73,12 @@ interface SpaceStore {
   disconnectWebSocket: () => void;
   setLocalTyping: (isTyping: boolean) => void;
   sendChatMessage: (message: string) => void;
+
+  // Co-op actions
+  submitCodeForReview: (title: string, code: string, lang: string) => Promise<void>;
+  fetchPendingReviews: () => Promise<void>;
+  submitPeerReview: (reviewId: string, status: 'approved' | 'rejected', feedback: string) => Promise<CoopActionResponse>;
+  setCoopWhiteboardOpen: (isOpen: boolean) => void;
 }
 
 function createCollisionMatrix(): number[][] {
@@ -148,6 +158,8 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
   chatMessages: [],
   localLastMessage: null,
   localLastMessageTime: null,
+  pendingReviews: [],
+  isCoopWhiteboardOpen: false,
 
   syncFromBackend: async () => {
     set({ isLoading: true });
@@ -413,6 +425,31 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
             ambientTheme: 'default',
           });
           useUserStore.getState().syncFromBackend().catch(console.warn);
+        } else if (type === 'COOP_REVIEW_CREATED') {
+          const { review } = data;
+          audioManager.playPeerReviewAlert();
+          set((prev) => ({
+            pendingReviews: [review, ...prev.pendingReviews],
+          }));
+        } else if (type === 'COOP_REVIEW_RESOLVED') {
+          const { review_id, status, feedback, xp_gained, author_id, reviewer_id } = data;
+          const currentPlayerId = getPlayerId() || '';
+
+          if (status === 'approved') {
+            audioManager.playPeerReviewApproved();
+          } else {
+            audioManager.playStep(); // short mechanical step chime
+          }
+
+          // Remove completed review from pending
+          set((prev) => ({
+            pendingReviews: prev.pendingReviews.filter((r) => r.id !== review_id),
+          }));
+
+          // Force XP update if player is part of the transaction
+          if (currentPlayerId === author_id || currentPlayerId === reviewer_id) {
+            useUserStore.getState().syncFromBackend().catch(console.warn);
+          }
         }
       } catch (err) {
         console.warn('Failed to parse WebSocket message:', err);
@@ -476,5 +513,43 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
         message
       }));
     }
+  },
+
+  submitCodeForReview: async (title: string, code: string, lang: string) => {
+    try {
+      await api.submitCoopCode(title, code, lang);
+      await get().fetchPendingReviews();
+    } catch (error) {
+      console.error('Failed to submit code for peer review:', error);
+      throw error;
+    }
+  },
+
+  fetchPendingReviews: async () => {
+    try {
+      const pending = await api.fetchPendingCoopReviews();
+      set({ pendingReviews: pending });
+    } catch (error) {
+      console.error('Failed to fetch pending reviews:', error);
+    }
+  },
+
+  submitPeerReview: async (reviewId: string, status: 'approved' | 'rejected', feedback: string) => {
+    try {
+      const response = await api.submitPeerReview(reviewId, status, feedback);
+      set((prev) => ({
+        pendingReviews: prev.pendingReviews.filter((r) => r.id !== reviewId),
+      }));
+      // Sync user state to update XP
+      await useUserStore.getState().syncFromBackend();
+      return response;
+    } catch (error) {
+      console.error('Failed to submit peer review:', error);
+      throw error;
+    }
+  },
+
+  setCoopWhiteboardOpen: (isOpen: boolean) => {
+    set({ isCoopWhiteboardOpen: isOpen });
   },
 }));

@@ -6,7 +6,7 @@ import { useUserStore } from '@/stores/userStore';
 import { useMissionStore } from '@/stores/missionStore';
 import { useCommunityStore } from '@/stores/communityStore';
 import { useSkillStore } from '@/stores/skillStore';
-import { api, streamChat, SpatialRagChunk } from '@/services/apiClient';
+import { api, streamChat, SpatialRagChunk, CoopReview } from '@/services/apiClient';
 import { careerService, missionService, skillService } from '@/services';
 import { PixelBadge, PixelButton, PixelCard } from '@/components/pixel';
 import { audioManager } from '@/utils/audioManager';
@@ -115,6 +115,12 @@ export default function SpaceBoard() {
     activeAnomaly,
     triggerAnomaly,
     resolveAnomaly,
+    pendingReviews,
+    isCoopWhiteboardOpen,
+    submitPeerReview,
+    submitCodeForReview,
+    fetchPendingReviews,
+    setCoopWhiteboardOpen,
   } = useSpaceStore();
 
   const { currentCareerId, totalXp, selectCareer, addXp } = useUserStore();
@@ -132,6 +138,15 @@ export default function SpaceBoard() {
   const [terminalOutput, setTerminalOutput] = useState<string[]>([]);
   const [isRecoveryCompiling, setIsRecoveryCompiling] = useState<boolean>(false);
   const [isConsoleShaking, setIsConsoleShaking] = useState<boolean>(false);
+
+  // Co-Op whiteboard and review state variables
+  const [whiteboardTab, setWhiteboardTab] = useState<'reviews' | 'quests'>('reviews');
+  const [selectedReview, setSelectedReview] = useState<CoopReview | null>(null);
+  const [coopFeedback, setCoopFeedback] = useState('');
+  const [isReviewActionRunning, setIsReviewActionRunning] = useState(false);
+  const [isPeerReviewModalOpen, setIsPeerReviewModalOpen] = useState(false);
+  const [peerReviewTitle, setPeerReviewTitle] = useState('');
+  const [isSubmittingReview, setIsSubmittingReview] = useState(false);
 
   // Unified overlay screen state: lobby | quests | portfolio | community | sandbox | skills | recovery | null
   const [activeOverlay, setActiveOverlay] = useState<'lobby' | 'quests' | 'portfolio' | 'community' | 'sandbox' | 'skills' | 'recovery' | null>(null);
@@ -240,6 +255,10 @@ export default function SpaceBoard() {
 
   const isNearSkillTerminal = useMemo(() => {
     return Math.abs(playerCoords.x - SKILL_TERMINAL.coords.x) <= 1 && Math.abs(playerCoords.y - SKILL_TERMINAL.coords.y) <= 1;
+  }, [playerCoords]);
+
+  const isNearCoopWhiteboard = useMemo(() => {
+    return Math.abs(playerCoords.x - 15) <= 1 && Math.abs(playerCoords.y - 5) <= 1;
   }, [playerCoords]);
 
   // Phase 11 Stance States selectors
@@ -402,6 +421,38 @@ export default function SpaceBoard() {
     return () => clearInterval(interval);
   }, [activeOverlay, activeAnomaly]);
 
+  // Hoisted overlay actions
+  const openOverlay = useCallback((overlayType: 'lobby' | 'quests' | 'portfolio' | 'community' | 'sandbox' | 'skills' | 'recovery') => {
+    audioManager.playOpen();
+    setActiveOverlay(overlayType);
+    if (overlayType === 'skills') {
+      setAmbientTheme('quiet-blue');
+    }
+  }, [setAmbientTheme]);
+
+  const closeOverlay = useCallback(() => {
+    audioManager.playClose();
+    setActiveOverlay(null);
+    if (activeOverlay === 'skills' || ambientTheme === 'quiet-blue') {
+      setAmbientTheme('default');
+    }
+  }, [activeOverlay, ambientTheme, setAmbientTheme]);
+
+  const closeCoopWhiteboard = useCallback(() => {
+    audioManager.playClose();
+    setCoopWhiteboardOpen(false);
+    if (ambientTheme === 'quiet-blue') {
+      setAmbientTheme('default');
+    }
+  }, [ambientTheme, setAmbientTheme, setCoopWhiteboardOpen]);
+
+  const openCoopWhiteboard = useCallback(() => {
+    audioManager.playOpen();
+    setCoopWhiteboardOpen(true);
+    fetchPendingReviews();
+    setAmbientTheme('quiet-blue');
+  }, [fetchPendingReviews, setCoopWhiteboardOpen, setAmbientTheme]);
+
   // Handle Keyboard Inputs
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
@@ -409,6 +460,19 @@ export default function SpaceBoard() {
       if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') {
         if (e.key === 'Escape') {
           (document.activeElement as HTMLElement).blur();
+        }
+        return;
+      }
+
+      // Prevent movement and close with Escape if an overlay or the whiteboard is open
+      if (activeOverlay || isCoopWhiteboardOpen) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          if (isCoopWhiteboardOpen) {
+            closeCoopWhiteboard();
+          } else {
+            closeOverlay();
+          }
         }
         return;
       }
@@ -485,6 +549,10 @@ export default function SpaceBoard() {
             }
             return;
           }
+          if (isNearCoopWhiteboard) {
+            openCoopWhiteboard();
+            return;
+          }
           if (interactiveNpcId) {
             const npc = NPC_INFO[interactiveNpcId as keyof typeof NPC_INFO];
             if (npc) {
@@ -510,23 +578,23 @@ export default function SpaceBoard() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [movePlayer, interactiveNpcId, isAdjacentToTable, isNearLobbyDesk, isNearDevWorkstation, isNearArchiveBookshelf, isNearSkillTerminal, activeChatNpc]);
-
-  const openOverlay = (overlayType: 'lobby' | 'quests' | 'portfolio' | 'community' | 'sandbox' | 'skills' | 'recovery') => {
-    audioManager.playOpen();
-    setActiveOverlay(overlayType);
-    if (overlayType === 'skills') {
-      setAmbientTheme('quiet-blue');
-    }
-  };
-
-  const closeOverlay = () => {
-    audioManager.playClose();
-    setActiveOverlay(null);
-    if (activeOverlay === 'skills' || ambientTheme === 'quiet-blue') {
-      setAmbientTheme('default');
-    }
-  };
+  }, [
+    movePlayer,
+    interactiveNpcId,
+    isAdjacentToTable,
+    isNearLobbyDesk,
+    isNearDevWorkstation,
+    isNearArchiveBookshelf,
+    isNearSkillTerminal,
+    activeChatNpc,
+    isNearCoopWhiteboard,
+    isCoopWhiteboardOpen,
+    activeOverlay,
+    openOverlay,
+    closeOverlay,
+    openCoopWhiteboard,
+    closeCoopWhiteboard,
+  ]);
 
   const toggleMute = () => {
     const nextMute = !isMuted;
@@ -839,8 +907,8 @@ export default function SpaceBoard() {
   }, [issues, commChannel]);
 
   const showSensorHud = useMemo(() => {
-    return !!(isNearLobbyDesk || isNearDevWorkstation || isNearArchiveBookshelf || isNearSkillTerminal || isAdjacentToTable);
-  }, [isNearLobbyDesk, isNearDevWorkstation, isNearArchiveBookshelf, isNearSkillTerminal, isAdjacentToTable]);
+    return !!(isNearLobbyDesk || isNearDevWorkstation || isNearArchiveBookshelf || isNearSkillTerminal || isAdjacentToTable || isNearCoopWhiteboard);
+  }, [isNearLobbyDesk, isNearDevWorkstation, isNearArchiveBookshelf, isNearSkillTerminal, isAdjacentToTable, isNearCoopWhiteboard]);
 
   return (
     <div className={`w-screen h-screen flex flex-col xl:flex-row gap-4 justify-between items-center relative select-none p-4 ${screenShake ? 'console-screen-shake' : ''}`}>
@@ -1262,6 +1330,9 @@ export default function SpaceBoard() {
             )}
             {isAdjacentToTable && (
               <span className="flex items-center gap-2"><strong className="text-indigo-400">会议圆桌：</strong> 靠近会议圆桌，按 <kbd className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-[10px] text-white">Enter</kbd> 或 <kbd className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-[10px] text-white">Space</kbd> 开启多智能体仲裁晨会！</span>
+            )}
+            {isNearCoopWhiteboard && (
+              <span className="flex items-center gap-2"><strong className="text-violet-400">协作白板：</strong> 靠近会议室协作白板，按 <kbd className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-[10px] text-white">Enter</kbd> 或 <kbd className="px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-[10px] text-white">Space</kbd> 开启同业代码评审。</span>
             )}
           </div>
         </div>
@@ -1919,24 +1990,96 @@ export default function SpaceBoard() {
                 )}
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleCompileCode}
+                    disabled={isCompiling}
+                    className="flex-1 py-2 text-center bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold text-xs rounded transition-colors active:scale-95 duration-75"
+                  >
+                    {isCompiling ? '⌛ 编译中...' : '🛠️ 运行测试并编译 (Run)'}
+                  </button>
+                  <button
+                    onClick={handleSandboxSubmit}
+                    disabled={testResult !== 'success' || isCompiling}
+                    className={`flex-1 py-2 text-center font-bold text-xs rounded transition-colors active:scale-95 duration-75 ${
+                      testResult === 'success' ? 'bg-amber-500 hover:bg-amber-400 text-slate-950' : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                    }`}
+                  >
+                    🚀 交付并提交评审
+                  </button>
+                </div>
                 <button
-                  onClick={handleCompileCode}
-                  disabled={isCompiling}
-                  className="flex-1 py-2 text-center bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold text-xs rounded transition-colors active:scale-95 duration-75"
+                  onClick={() => setIsPeerReviewModalOpen(true)}
+                  className="w-full py-2 text-center bg-violet-600 hover:bg-violet-500 text-slate-100 font-bold text-xs rounded transition-colors active:scale-95 duration-75 flex items-center justify-center gap-1.5 border border-violet-500/30"
                 >
-                  {isCompiling ? '⌛ 编译中...' : '🛠️ 运行测试并编译 (Run)'}
-                </button>
-                <button
-                  onClick={handleSandboxSubmit}
-                  disabled={testResult !== 'success' || isCompiling}
-                  className={`flex-1 py-2 text-center font-bold text-xs rounded transition-colors active:scale-95 duration-75 ${
-                    testResult === 'success' ? 'bg-amber-500 hover:bg-amber-400 text-slate-950' : 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                  }`}
-                >
-                  🚀 交付并提交评审
+                  👥 发起同业代码评审 (Submit for Peer Review)
                 </button>
               </div>
+
+              {/* Mini Inline Peer Review Modal */}
+              {isPeerReviewModalOpen && (
+                <div className="absolute inset-0 bg-slate-950/95 backdrop-blur-sm z-50 flex items-center justify-center p-6 rounded-xl">
+                  <div className="bg-slate-900 border-2 border-violet-500/80 p-5 rounded-lg w-full max-w-sm font-mono shadow-[0_0_30px_rgba(139,92,246,0.3)] text-left">
+                    <div className="flex justify-between items-center border-b border-slate-800 pb-2 mb-3">
+                      <h4 className="text-violet-400 font-bold text-xs">👥 发起同业代码评审 (Peer Review)</h4>
+                      <button 
+                        onClick={() => setIsPeerReviewModalOpen(false)}
+                        className="text-slate-500 hover:text-slate-300 text-[10px]"
+                      >
+                        [关闭]
+                      </button>
+                    </div>
+                    
+                    <p className="text-[10px] text-slate-400 mb-3 leading-normal">
+                      你的代码将会发布在会议室的协作白板上。如果该空间只有你一人，AI 导师将在 5~8 秒后自动为您点评，并发放 XP 奖励！
+                    </p>
+
+                    <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">
+                      评审主题 / 模块描述
+                    </label>
+                    <input 
+                      type="text"
+                      placeholder="例如: P0 数据清洗与多维聚合模块"
+                      value={peerReviewTitle}
+                      onChange={(e) => setPeerReviewTitle(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 focus:border-violet-500 rounded p-2 text-xs text-slate-200 outline-none mb-4"
+                    />
+
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setIsPeerReviewModalOpen(false)}
+                        className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-bold rounded transition-colors"
+                      >
+                        取消
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (!peerReviewTitle.trim()) {
+                            alert('请输入评审主题！');
+                            return;
+                          }
+                          setIsSubmittingReview(true);
+                          try {
+                            await submitCodeForReview(peerReviewTitle, sandboxCode, 'python');
+                            setIsPeerReviewModalOpen(false);
+                            setPeerReviewTitle('');
+                            alert('提交成功！请前往会议室 (15,5) 协作白板，或等待 AI 导师/同业同事进行评审。');
+                          } catch (err) {
+                            alert('提交失败，请重试');
+                          } finally {
+                            setIsSubmittingReview(false);
+                          }
+                        }}
+                        disabled={isSubmittingReview}
+                        className="flex-1 py-1.5 bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-500 text-slate-100 text-[11px] font-bold rounded transition-colors"
+                      >
+                        {isSubmittingReview ? '提交中...' : '确认发布'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -2451,6 +2594,258 @@ export default function SpaceBoard() {
               <div className="flex justify-end gap-2">
                 <button onClick={() => setShowPostDialog(false)} className="py-1.5 px-4 bg-slate-800 border border-slate-700 text-xs rounded text-slate-400">取消</button>
                 <button onClick={handleCreatePost} className="py-1.5 px-4 bg-emerald-600 border border-emerald-500 text-slate-950 font-bold text-xs rounded">确认发布</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 8. CO-OP WHITEBOARD & PEER REVIEW OVERLAY */}
+      {isCoopWhiteboardOpen && (
+        <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-40 flex items-center justify-center p-4">
+          <div className="w-full max-w-5xl h-[650px] bg-slate-900 border-2 border-violet-500 rounded-xl shadow-[0_0_50px_rgba(139,92,246,0.35)] flex flex-col overflow-hidden font-mono select-none animate-slide-in-up pointer-events-auto">
+            {/* Header */}
+            <div className="bg-slate-950 px-6 py-4 flex justify-between items-center border-b border-violet-950">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl animate-pulse">📋</span>
+                <div>
+                  <span className="text-[9px] font-bold text-violet-400 tracking-widest uppercase">CO-OP DIGITAL WHITEBOARD</span>
+                  <h3 className="pixel-title text-base font-bold text-slate-100">协作白板与同业代码评审 (Co-Op Review Center)</h3>
+                </div>
+              </div>
+              <button 
+                onClick={closeCoopWhiteboard} 
+                className="text-slate-400 hover:text-violet-400 border border-slate-800 bg-slate-950 hover:border-violet-500/50 px-3 py-1 text-xs transition-colors duration-200 rounded"
+              >
+                [关闭 Esc]
+              </button>
+            </div>
+
+            {/* Main Body */}
+            <div className="flex-1 flex min-h-0">
+              {/* Left Column: Side Navigation Tabs (Pending Reviews, Active Quests) */}
+              <div className="w-80 border-r border-slate-800/80 bg-slate-950/50 flex flex-col p-4 gap-4 overflow-y-auto">
+                {/* Tabs selection header */}
+                <div className="flex bg-slate-950 p-1 border border-slate-800 rounded-md">
+                  <button 
+                    onClick={() => setWhiteboardTab('reviews')}
+                    className={`flex-1 text-center py-1.5 text-xs font-bold rounded transition-colors ${
+                      whiteboardTab === 'reviews' ? 'bg-violet-950/65 border border-violet-500/50 text-violet-300' : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    待评审 ({pendingReviews.length})
+                  </button>
+                  <button 
+                    onClick={() => setWhiteboardTab('quests')}
+                    className={`flex-1 text-center py-1.5 text-xs font-bold rounded transition-colors ${
+                      whiteboardTab === 'quests' ? 'bg-violet-950/65 border border-violet-500/50 text-violet-300' : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    团队任务 (3)
+                  </button>
+                </div>
+
+                {whiteboardTab === 'reviews' ? (
+                  <div className="flex flex-col gap-2 flex-1 min-h-0">
+                    <span className="text-[9px] font-bold text-slate-500 tracking-wider uppercase">待处理请求 (PENDING REVIEWS)</span>
+                    {pendingReviews.length === 0 ? (
+                      <div className="flex-1 flex flex-col items-center justify-center p-6 text-center border border-dashed border-slate-800 rounded-lg">
+                        <span className="text-2xl text-slate-700 mb-2">☕</span>
+                        <p className="text-[11px] text-slate-500 leading-normal">暂无待处理的代码评审请求。去沙盒写点代码并提交同业评审吧！</p>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-2.5 overflow-y-auto max-h-[440px] pr-1">
+                        {pendingReviews.map((rev) => {
+                          const isSelf = rev.user_id === (getPlayerId() || '');
+                          return (
+                            <button
+                              key={rev.id}
+                              onClick={() => setSelectedReview(rev)}
+                              className={`w-full text-left p-3 rounded-lg border transition-all ${
+                                selectedReview?.id === rev.id 
+                                  ? 'bg-violet-950/40 border-violet-500/80 shadow-[0_0_12px_rgba(139,92,246,0.15)]' 
+                                  : 'bg-slate-900/60 border-slate-800 hover:border-slate-700/80'
+                              }`}
+                            >
+                              <div className="flex justify-between items-start mb-1.5">
+                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase ${
+                                  isSelf ? 'bg-indigo-950 text-indigo-400' : 'bg-cyan-950 text-cyan-400'
+                                }`}>
+                                  {isSelf ? '我的代码' : `用户: ${rev.user_id}`}
+                                </span>
+                                <span className="text-[9px] text-slate-500">{rev.language}</span>
+                              </div>
+                              <h4 className="text-xs font-bold text-slate-200 truncate">{rev.title}</h4>
+                              <p className="text-[10px] text-slate-500 mt-1 truncate">
+                                {rev.code_content}
+                              </p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2.5">
+                    <span className="text-[9px] font-bold text-slate-500 tracking-wider uppercase">共享协作副本 (ACTIVE TEAM QUESTS)</span>
+                    
+                    <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[9px] font-bold text-red-400 bg-red-950/50 border border-red-900/60 px-1.5 py-0.5 rounded">P0 高能事件</span>
+                        <span className="text-[9px] text-red-400 animate-pulse">● 进行中</span>
+                      </div>
+                      <h4 className="text-xs font-bold text-slate-200">物理数据库100%满载排修</h4>
+                      <p className="text-[10px] text-slate-400 leading-relaxed">
+                        由于连接并发溢出导致服务器卡死。需要两名开发人员：一名负责在 (18, 15) 核心终端执行索引重建，另一名在协作白板做最终代码同业复核。
+                      </p>
+                      <div className="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden border border-slate-800">
+                        <div className="bg-red-500 h-full w-[45%]" />
+                      </div>
+                      <div className="flex justify-between text-[9px] text-slate-500">
+                        <span>进度: 45%</span>
+                        <span>奖励: 150 XP</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-2 opacity-75">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[9px] font-bold text-blue-400 bg-blue-950/50 border border-blue-900/60 px-1.5 py-0.5 rounded">P1 架构重构</span>
+                        <span className="text-[9px] text-slate-500">● 准备中</span>
+                      </div>
+                      <h4 className="text-xs font-bold text-slate-300">分布式熔断器改造</h4>
+                      <p className="text-[10px] text-slate-500 leading-relaxed">
+                        当单点节点心跳超时，协同编写异常熔断并自愈的熔断降级中间件，提升核心服务稳定性。
+                      </p>
+                      <div className="flex justify-between text-[9px] text-slate-500">
+                        <span>前置条件: Phase 15 解锁</span>
+                        <span>奖励: 200 XP</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Right Pane: Green-Screen CRT Code Viewer & Feedback Terminal */}
+              <div className="flex-1 bg-slate-950 flex flex-col relative overflow-hidden p-6 gap-4">
+                <div className="absolute inset-0 bg-scanlines opacity-[0.03] pointer-events-none" />
+                
+                {selectedReview ? (
+                  <div className="flex-1 flex flex-col gap-4 min-h-0">
+                    {/* Header Details inside right pane */}
+                    <div className="border border-slate-800 bg-slate-900/40 rounded-lg p-4 flex flex-col gap-2 text-left">
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <span className="text-emerald-500 font-bold text-xs">📟</span>
+                          <span className="text-[9px] font-bold text-slate-500 tracking-wider">CODE INSPECTION TERMINAL</span>
+                        </div>
+                        <span className="text-[9px] text-slate-500 font-mono">STATUS: {selectedReview.status.toUpperCase()}</span>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px] text-slate-300">
+                        <div>
+                          <span className="text-slate-500">提交作者: </span>
+                          <strong className="text-slate-100">{selectedReview.user_id}</strong>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">开发语言: </span>
+                          <strong className="text-emerald-400 font-bold uppercase">{selectedReview.language}</strong>
+                        </div>
+                        <div className="col-span-2">
+                          <span className="text-slate-500">评审主题: </span>
+                          <strong className="text-slate-100">{selectedReview.title}</strong>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Fenced scrollable code review panel */}
+                    <div className="flex-1 border border-emerald-950/60 rounded bg-slate-950 relative flex flex-col min-h-0">
+                      <div className="absolute top-2 right-4 text-[9px] font-bold text-emerald-600 tracking-wider">VIEWPORT</div>
+                      <div className="p-4 overflow-y-auto flex-1 font-mono text-xs text-emerald-400/90 leading-relaxed select-text whitespace-pre text-left bg-[rgba(6,20,12,0.15)] glow-green-text">
+                        {selectedReview.code_content}
+                      </div>
+                    </div>
+
+                    {/* Feedback Form / Locked Prompt */}
+                    {selectedReview.user_id === (getPlayerId() || '') ? (
+                      <div className="bg-yellow-950/30 border border-yellow-800/40 p-4 rounded-lg flex items-center gap-3 text-left">
+                        <span className="text-yellow-500 text-lg">⚠️</span>
+                        <p className="text-[11px] text-yellow-300 leading-normal">
+                          <strong>自评锁定:</strong> 您无法对自己的代码提交进行评审。请在团队聊天框中邀请同事在协作白板中为您提供 Review，或静候 AI 导师为您做代码核查。
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-3 text-left">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                          输入同业代码评审意见 (REVIEWER COMMENTS)
+                        </label>
+                        <textarea
+                          placeholder="在此写下你专业的评审意见，例如: 此实现优雅，但在高并发场景下可能存在竞态条件，已合并同意通过。"
+                          value={coopFeedback}
+                          onChange={(e) => setCoopFeedback(e.target.value)}
+                          className="w-full h-20 bg-slate-900 border border-slate-800 focus:border-violet-500 rounded p-2.5 text-xs text-slate-200 outline-none resize-none"
+                        />
+
+                        {/* Interactive Buttons */}
+                        <div className="flex gap-3">
+                          <button
+                            onClick={async () => {
+                              if (!coopFeedback.trim()) {
+                                alert('请写下评审意见后再驳回！');
+                                return;
+                              }
+                              setIsReviewActionRunning(true);
+                              try {
+                                await submitPeerReview(selectedReview.id, 'rejected', coopFeedback);
+                                setSelectedReview(null);
+                                setCoopFeedback('');
+                                alert('代码评审已驳回。作者将收到带有您意见的提示，并在其沙盒中修改。');
+                              } catch (err) {
+                                alert('操作失败，请重试');
+                              } finally {
+                                setIsReviewActionRunning(false);
+                              }
+                            }}
+                            disabled={isReviewActionRunning}
+                            className="flex-1 py-2 text-center bg-rose-600 hover:bg-rose-500 disabled:bg-slate-800 disabled:text-slate-500 text-slate-100 font-bold text-xs rounded transition-all active:scale-95 duration-75"
+                          >
+                            ❌ 驳回并修改 (Reject)
+                          </button>
+                          <button
+                            onClick={async () => {
+                              if (!coopFeedback.trim()) {
+                                alert('请填写评审意见后再通过！');
+                                return;
+                              }
+                              setIsReviewActionRunning(true);
+                              try {
+                                await submitPeerReview(selectedReview.id, 'approved', coopFeedback);
+                                setSelectedReview(null);
+                                setCoopFeedback('');
+                                alert('同业评审已通过！XP 奖励已派发至您的账户及原作者账户。');
+                              } catch (err) {
+                                alert('操作失败，请重试');
+                              } finally {
+                                setIsReviewActionRunning(false);
+                              }
+                            }}
+                            disabled={isReviewActionRunning}
+                            className="flex-1 py-2 text-center bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 font-bold text-xs rounded transition-all active:scale-95 duration-75"
+                          >
+                            ✓ 同意并通过 (Approve)
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+                    <span className="text-4xl text-slate-700 animate-pulse mb-3">📟</span>
+                    <h4 className="text-xs font-bold text-slate-400">同业评审终端就绪</h4>
+                    <p className="text-[11px] text-slate-500 max-w-sm mt-1 leading-normal">
+                      请从左侧列表选择一项待处理的代码请求，以开始查看其源码，补充评审反馈并进行审批。
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>

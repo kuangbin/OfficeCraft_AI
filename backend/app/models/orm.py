@@ -283,3 +283,22 @@ class TeamMeetingLog(base):
   def dialogue_history(self, val: list[dict[str, Any]]) -> None:
     """Encodes dialogue history list to JSON string."""
     self.dialogue_history_json = json.dumps(val)
+
+
+class CoopReview(base):
+  """Shared peer review records for multiplayer collaboration."""
+
+  __tablename__ = "coop_reviews"
+
+  id = Column(String, primary_key=True)
+  user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+  title = Column(String, nullable=False)
+  code_content = Column(Text, nullable=False)
+  language = Column(String, nullable=False, default="python")
+  status = Column(String, nullable=False, default="pending")  # "pending", "approved", "rejected"
+  reviewer_id = Column(String, nullable=True, default=None)
+  feedback = Column(Text, nullable=True, default=None)
+  created_at = Column(DateTime, nullable=True, default=datetime.utcnow)
+
+  user = relationship("User", foreign_keys=[user_id])
+
