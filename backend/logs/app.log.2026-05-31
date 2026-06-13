@@ -1,0 +1,21 @@
+2026-05-31 07:56:45,260 [WARNING] uvicorn.error: WatchFiles detected changes in 'app/core/llm/parsing.py', 'app/core/llm/providers/openai_like.py', 'tests/test_llm.py', 'app/services/eval.py', 'app/api/v1/user.py', 'app/services/agent.py', 'tests/test_deps.py', 'tests/test_schemas.py', 'app/core/llm/base.py', 'app/core/config.py', 'app/core/logging_config.py', 'app/models/orm.py', 'tests/test_mission.py', 'app/core/llm/__init__.py', 'app/services/mission.py', 'app/services/skill_catalog.py', 'app/models/schemas.py', 'app/api/deps.py', 'tests/test_eval.py', 'tests/test_identity_contract.py', 'tests/base.py'. Reloading...
+2026-05-31 07:56:47,996 [INFO] uvicorn.error: Started server process [66874]
+2026-05-31 07:56:47,996 [INFO] uvicorn.error: Waiting for application startup.
+2026-05-31 07:56:48,024 [INFO] uvicorn.error: Application startup complete.
+2026-05-31 07:56:48,025 [INFO] uvicorn.access: 127.0.0.1:51195 - "OPTIONS /api/v1/user/sync HTTP/1.1" 200
+2026-05-31 07:56:48,025 [INFO] uvicorn.access: 127.0.0.1:51198 - "OPTIONS /api/v1/user/sync HTTP/1.1" 200
+2026-05-31 07:56:48,050 [INFO] uvicorn.access: 127.0.0.1:51198 - "GET /api/v1/user/sync HTTP/1.1" 200
+2026-05-31 07:56:48,052 [INFO] uvicorn.access: 127.0.0.1:51195 - "GET /api/v1/user/sync HTTP/1.1" 200
+2026-05-31 08:18:19,238 [INFO] uvicorn.access: 127.0.0.1:57007 - "OPTIONS /api/v1/user/sync HTTP/1.1" 200
+2026-05-31 08:18:19,266 [INFO] uvicorn.access: 127.0.0.1:57007 - "GET /api/v1/user/sync HTTP/1.1" 200
+2026-05-31 09:02:09,298 [INFO] uvicorn.access: 127.0.0.1:59685 - "OPTIONS /api/v1/user/sync HTTP/1.1" 200
+2026-05-31 09:02:09,378 [INFO] uvicorn.access: 127.0.0.1:59685 - "GET /api/v1/user/sync HTTP/1.1" 200
+2026-05-31 09:06:36,161 [INFO] uvicorn.access: 127.0.0.1:62304 - "GET /api/v1/user/sync HTTP/1.1" 200
+2026-05-31 10:59:44,442 [INFO] uvicorn.access: 127.0.0.1:60721 - "OPTIONS /api/v1/user/sync HTTP/1.1" 200
+2026-05-31 10:59:44,563 [INFO] uvicorn.access: 127.0.0.1:60721 - "GET /api/v1/user/sync HTTP/1.1" 200
+2026-05-31 16:51:47,131 [INFO] uvicorn.access: 127.0.0.1:57720 - "OPTIONS /api/v1/user/sync HTTP/1.1" 200
+2026-05-31 16:51:47,270 [INFO] uvicorn.access: 127.0.0.1:57720 - "GET /api/v1/user/sync HTTP/1.1" 200
+2026-05-31 19:35:55,986 [INFO] uvicorn.access: 127.0.0.1:50428 - "OPTIONS /api/v1/user/sync HTTP/1.1" 200
+2026-05-31 19:35:56,057 [INFO] uvicorn.access: 127.0.0.1:50428 - "GET /api/v1/user/sync HTTP/1.1" 200
+2026-06-01 09:33:16,874 [INFO] uvicorn.error: Shutting down
+2026-06-01 09:33:17,004 [INFO] uvicorn.error: Finished server process [66874]
