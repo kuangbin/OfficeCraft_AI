@@ -69,9 +69,18 @@ class TestEvaluationService(BaseDbTestCase):
         submission_text="Here is my completed work report...",
     )
 
-    # Process evaluation
+    # Process evaluation with a mocked orchestrator to avoid external network dependencies
+    orchestrator = _orchestrator_with({
+        "status": "success",
+        "feedback": "Perfect job!",
+        "experience_gains": {
+            "skill_data_cleaning": 15,
+        },
+        "trigger_feynman_challenge": False,
+        "feynman_question": None,
+    })
     response = self.run_async(evaluate_user_submission(
-        req, self.db_session, user_id, get_evaluation_orchestrator(),
+        req, self.db_session, user_id, orchestrator,
     ))
     self.assertEqual(response.status, "success")
     self.assertIsNotNone(response.feedback)
