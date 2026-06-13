@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useSpaceStore } from '@/stores/spaceStore';
 import { api, streamChat, SpatialRagChunk } from '@/services/apiClient';
 import { PixelBadge, PixelButton, PixelCard } from '@/components/pixel';
+import { audioManager } from '@/utils/audioManager';
 
 // Map area labels
 const ZONES = {
@@ -81,6 +82,33 @@ export default function SpaceBoard() {
   const lastMoveTimeRef = useRef<number>(0);
   const [activeZone, setActiveZone] = useState<string>('Lobby');
 
+  // Audio state
+  const [isMuted, setIsMuted] = useState(false);
+  const [volume, setVolume] = useState(0.5);
+
+  useEffect(() => {
+    setIsMuted(audioManager.getMuted());
+    setVolume(audioManager.getVolume());
+  }, []);
+
+  const toggleMute = () => {
+    const nextMute = !isMuted;
+    audioManager.setMuted(nextMute);
+    setIsMuted(nextMute);
+    if (!nextMute) {
+      audioManager.playOpen();
+    }
+  };
+
+  const handleVolumeChange = (vol: number) => {
+    audioManager.setVolume(vol);
+    setVolume(vol);
+    if (isMuted && vol > 0) {
+      audioManager.setMuted(false);
+      setIsMuted(false);
+    }
+  };
+
   // Bookcase state
   const [selectedBookcase, setSelectedBookcase] = useState<typeof BOOKCASES.pandas_library | null>(null);
   const [bookcaseQuery, setBookcaseQuery] = useState('');
@@ -124,6 +152,26 @@ export default function SpaceBoard() {
       setActiveZone(y <= 12 ? 'Meeting Room' : 'Archive Room');
     }
   }, [playerCoords]);
+
+  // Audio Context Ignition on User Gestures
+  useEffect(() => {
+    const handleGesture = () => {
+      audioManager.initContext();
+    };
+    window.addEventListener('pointerdown', handleGesture);
+    window.addEventListener('keydown', handleGesture);
+    return () => {
+      window.removeEventListener('pointerdown', handleGesture);
+      window.removeEventListener('keydown', handleGesture);
+    };
+  }, []);
+
+  // Theme transitions audio triggers
+  useEffect(() => {
+    if (ambientTheme && ambientTheme !== 'default') {
+      audioManager.playThemeTransition(ambientTheme);
+    }
+  }, [ambientTheme]);
 
   // Handle Keyboard Inputs
   useEffect(() => {
@@ -190,6 +238,7 @@ export default function SpaceBoard() {
 
   const startTeamMeetingModal = async () => {
     setIsMeetingOpen(true);
+    audioManager.playOpen();
     setMeetingAmyText('');
     setMeetingLingText('');
     setMeetingPlayerText('');
@@ -207,10 +256,12 @@ export default function SpaceBoard() {
         if (chunk.speaker === 'pm_amy') {
           if (chunk.chunk) {
             setMeetingAmyText((prev) => prev + chunk.chunk);
+            audioManager.playTypewriter();
           }
         } else if (chunk.speaker === 'mentor_ling') {
           if (chunk.chunk) {
             setMeetingLingText((prev) => prev + chunk.chunk);
+            audioManager.playTypewriter();
           }
         } else if (chunk.status === 'finished') {
           setMeetingFinished(true);
@@ -228,6 +279,7 @@ export default function SpaceBoard() {
 
   const handleArbitrateChoice = async (choice: 'speed' | 'quality' | 'balance') => {
     if (!unresolvedConflict || isMeetingStreaming) return;
+    audioManager.playOpen();
     setIsMeetingStreaming(true);
     try {
       const res = await api.arbitrateConflict(unresolvedConflict.conflict_id, choice);
@@ -244,6 +296,7 @@ export default function SpaceBoard() {
       for (let i = 0; i < amyTurn.length; i++) {
         amyWritten += amyTurn[i];
         setMeetingAmyText(amyWritten);
+        audioManager.playTypewriter();
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
 
@@ -252,6 +305,7 @@ export default function SpaceBoard() {
       for (let i = 0; i < lingTurn.length; i++) {
         lingWritten += lingTurn[i];
         setMeetingLingText(lingWritten);
+        audioManager.playTypewriter();
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
 
@@ -265,12 +319,14 @@ export default function SpaceBoard() {
 
   const handleCloseMeeting = () => {
     setIsMeetingOpen(false);
+    audioManager.playClose();
     syncFromBackend();
   };
 
   // Open Chat Dialogue
   const startConversation = (npc: typeof NPC_INFO.mentor_ling) => {
     setActiveChatNpc(npc);
+    audioManager.playOpen();
     setChatMessages([
       { role: 'npc', content: npc.greeting }
     ]);
@@ -280,6 +336,7 @@ export default function SpaceBoard() {
   // Close Chat
   const closeConversation = () => {
     setActiveChatNpc(null);
+    audioManager.playClose();
     setChatMessages([]);
   };
 
@@ -305,6 +362,7 @@ export default function SpaceBoard() {
             const lastIndex = copy.length - 1;
             if (lastIndex >= 0 && copy[lastIndex].role === 'npc') {
               copy[lastIndex].content += chunk;
+              audioManager.playTypewriter();
             }
             return copy;
           });
@@ -332,6 +390,7 @@ export default function SpaceBoard() {
 
     setBookcaseQuery(queryText);
     setIsSearchingRag(true);
+    audioManager.playRagScan();
     try {
       const response = await triggerBookcaseSearch(selectedBookcase.id, queryText);
       setRagResults(response.top_k_chunks || []);
@@ -345,6 +404,7 @@ export default function SpaceBoard() {
   // Click on map bookcase item
   const openBookcasePanel = (bookcase: typeof BOOKCASES.pandas_library) => {
     setSelectedBookcase(bookcase);
+    audioManager.playOpen();
     setBookcaseQuery('');
     setRagResults([]);
   };
@@ -370,7 +430,31 @@ export default function SpaceBoard() {
           </div>
 
           {/* Quick Stats */}
-          <div className="flex gap-4 font-mono text-xs">
+          <div className="flex gap-4 font-mono text-xs items-center">
+            {/* Retro Volume & Mute Controller */}
+            <div className="border border-slate-700 bg-slate-950 px-3 py-1.5 flex items-center gap-3">
+              <button
+                onClick={toggleMute}
+                className="text-sm select-none hover:scale-105 active:scale-95 transition-transform duration-75 focus:outline-none"
+                title={isMuted ? '取消静音' : '静音'}
+              >
+                {isMuted ? '🔇' : '🔊'}
+              </button>
+              <div className="flex items-center gap-1.5 select-none">
+                <span className="text-[10px] text-slate-500 font-bold tracking-wider">VOL</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={volume}
+                  onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
+                  className="w-16 h-1 rounded bg-slate-800 accent-indigo-500 cursor-pointer border border-slate-700 outline-none"
+                />
+                <span className="text-[10px] font-bold text-slate-400 w-5 text-right">{Math.round(volume * 100)}%</span>
+              </div>
+            </div>
+
             <div className="border border-slate-700 bg-slate-950 px-3 py-1.5 flex items-center gap-2">
               <span className="text-cyan-400">📍 COORDINATES</span>
               <span className="font-bold text-cyan-300">({playerCoords.x}, {playerCoords.y})</span>
@@ -669,7 +753,7 @@ export default function SpaceBoard() {
       {/* ================== RAG Glassmorphic Bookshelf Sidebar panel ================== */}
       {selectedBookcase ? (
         <div className="w-full lg:w-[400px] border-4 border-emerald-600 bg-slate-900/90 backdrop-blur-md p-5 shadow-2xl relative select-none animate-slide-in-up self-stretch">
-          <div className="absolute top-2 right-4 text-slate-500 hover:text-slate-300 text-xs font-mono cursor-pointer" onClick={() => setSelectedBookcase(null)}>
+          <div className="absolute top-2 right-4 text-slate-500 hover:text-slate-300 text-xs font-mono cursor-pointer" onClick={() => { setSelectedBookcase(null); audioManager.playClose(); }}>
             [关闭 ×]
           </div>
 

@@ -2,6 +2,7 @@
 
 import { create } from 'zustand';
 import { api, SpaceCoords, SpaceActiveMission, SpaceConflict, SpaceStateResponse } from '@/services/apiClient';
+import { audioManager } from '@/utils/audioManager';
 
 interface SpaceStore {
   playerCoords: SpaceCoords;
@@ -141,6 +142,7 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
 
     // Optimistically update player coordinates locally for ultra-snappy feedback
     set({ playerCoords: { x: nextX, y: nextY } });
+    audioManager.playStep();
 
     try {
       const response = await api.moveSpacePlayer(nextX, nextY);
