@@ -44,6 +44,8 @@
    - 玩家可移步至[资料库]的特定“实体书架”（如 Pandas 书架、软件设计原则书架）。点击书架触发 RAG 语义检索，向量召回被物理限制在当前书架对应的物理 Markdown 文件集，彻底打通空间坐标与知识上下文。
 5. **多智能体晨会与冲突斡旋 (Multi-Agent Team Standup)**  
    - 接取任务需物理走到会议室圆桌。后端 `TeamMeetingOrchestrator` 以流式队列形式拉起晨会，PM Amy 与 TL 高凌会就产品上线速度与架构性能展开激烈的唇枪舌战，由用户作为中立方进行斡旋调解评分。
+6. **RPG 走动转向与双腿迈步动画 (RPG Walk Cycle & Direction-Facing Animations)**  
+   - 玩家角色支持 4 方向（上下左右）物理转向，面向后方时自动遮盖皮肤要素呈现后脑勺、隐藏前胸领带。在走动时触发身体弹性轻微起伏（bouncing）与 8-bit 双腿剪刀步摆动（procedural scissor swing）微动效，行走停止 120ms 后顺滑静止。
 
 ---
 

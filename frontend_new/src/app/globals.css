@@ -718,3 +718,62 @@ a {
   box-shadow: 0 4px #cbd5e1; /* White sneakers */
 }
 
+/* ================== RPG Character Sprite Walk Cycle & Facing States ================== */
+
+/* 1. Walk Cycle Animations */
+.pixel-char-sprite[data-walking="true"] {
+  animation: pixel-char-bounce 0.15s infinite ease-in-out;
+}
+
+.pixel-char-sprite[data-walking="true"] .pixel-char-body::after {
+  animation: pixel-legs-swing 0.15s infinite ease-in-out;
+}
+
+@keyframes pixel-char-bounce {
+  0%, 100% {
+    transform: scale(1.1) translateY(0);
+  }
+  50% {
+    transform: scale(1.1) translateY(-2px);
+  }
+}
+
+@keyframes pixel-legs-swing {
+  0%, 100% {
+    box-shadow: 0 4px #cbd5e1; /* Both feet flat */
+  }
+  50% {
+    box-shadow: -1px 3px #cbd5e1, 1px 4px #cbd5e1; /* Left leg lifts slightly */
+  }
+}
+
+/* 2. Direction Facing Rules */
+
+/* Left Facing: shift facial features left */
+.pixel-char-sprite[data-direction="left"] .pixel-char-face::before {
+  left: 1px;
+}
+.pixel-char-sprite[data-direction="left"] .pixel-char-hair {
+  left: 2px;
+}
+
+/* Right Facing: shift facial features right */
+.pixel-char-sprite[data-direction="right"] .pixel-char-face::before {
+  left: 3px;
+}
+.pixel-char-sprite[data-direction="right"] .pixel-char-hair {
+  left: 4px;
+}
+
+/* Up Facing: looking at the back of the head */
+.pixel-char-sprite[data-direction="up"] .pixel-char-face {
+  background: #27140b; /* Back of hair covers face skin tone */
+}
+.pixel-char-sprite[data-direction="up"] .pixel-char-face::before {
+  display: none; /* Hide face elements (eyes, cheeks) */
+}
+.pixel-char-sprite[data-direction="up"] .pixel-char-body::before {
+  display: none; /* Hide front collar/tie */
+}
+
+

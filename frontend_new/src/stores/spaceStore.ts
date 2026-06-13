@@ -13,6 +13,8 @@ interface SpaceStore {
   interactiveNpcId: string | null;
   collisionMatrix: number[][];
   isLoading: boolean;
+  facingDirection: 'down' | 'up' | 'left' | 'right';
+  isWalking: boolean;
 
   // Actions
   syncFromBackend: () => Promise<void>;
@@ -87,6 +89,8 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
   interactiveNpcId: null,
   collisionMatrix: createCollisionMatrix(),
   isLoading: false,
+  facingDirection: 'down',
+  isWalking: false,
 
   syncFromBackend: async () => {
     set({ isLoading: true });
@@ -140,9 +144,25 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
       return null;
     }
 
+    // Determine facing direction based on displacement
+    let facing: 'down' | 'up' | 'left' | 'right' = 'down';
+    if (dx > 0) facing = 'right';
+    else if (dx < 0) facing = 'left';
+    else if (dy > 0) facing = 'down';
+    else if (dy < 0) facing = 'up';
+
     // Optimistically update player coordinates locally for ultra-snappy feedback
-    set({ playerCoords: { x: nextX, y: nextY } });
+    set({ 
+      playerCoords: { x: nextX, y: nextY },
+      facingDirection: facing,
+      isWalking: true
+    });
     audioManager.playStep();
+
+    // Reset walking state after the tile-movement transition completes (100ms duration)
+    setTimeout(() => {
+      set({ isWalking: false });
+    }, 120);
 
     try {
       const response = await api.moveSpacePlayer(nextX, nextY);

@@ -77,6 +77,8 @@ export default function SpaceBoard() {
     syncFromBackend,
     movePlayer,
     triggerBookcaseSearch,
+    facingDirection,
+    isWalking,
   } = useSpaceStore();
 
   const lastMoveTimeRef = useRef<number>(0);
@@ -646,7 +648,11 @@ export default function SpaceBoard() {
             </div>
 
             {/* Retro CSS Pixel Character Sprite matching the image! */}
-            <div className="pixel-char-sprite">
+            <div
+              className="pixel-char-sprite"
+              data-direction={facingDirection}
+              data-walking={isWalking ? "true" : "false"}
+            >
               <div className="pixel-char-hair" />
               <div className="pixel-char-face" />
               <div className="pixel-char-body" />
