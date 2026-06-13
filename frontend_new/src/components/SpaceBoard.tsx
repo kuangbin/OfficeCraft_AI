@@ -213,6 +213,24 @@ export default function SpaceBoard() {
     return Math.abs(playerCoords.x - SKILL_TERMINAL.coords.x) <= 1 && Math.abs(playerCoords.y - SKILL_TERMINAL.coords.y) <= 1;
   }, [playerCoords]);
 
+  // Phase 11 Stance States selectors
+  const isSitting = useMemo(() => {
+    const { x, y } = playerCoords;
+    return (y === 2 && (x === 2 || x === 3)) || (y === 16 && (x === 21 || x === 22));
+  }, [playerCoords]);
+
+  const isReading = useMemo(() => {
+    return selectedBookcase !== null;
+  }, [selectedBookcase]);
+
+  const isWorkingLaptop = useMemo(() => {
+    return activeOverlay === 'sandbox' || (activeOverlay === 'quests' && isNearDevWorkstation);
+  }, [activeOverlay, isNearDevWorkstation]);
+
+  const isTalking = useMemo(() => {
+    return !!activeChatNpc || isMeetingOpen || (!!unresolvedConflict && isAdjacentToTable);
+  }, [activeChatNpc, isMeetingOpen, unresolvedConflict, isAdjacentToTable]);
+
   // Local active mission derived from the frontend store if the backend activeMission is not yet synced or available
   const localActiveMission = useMemo(() => {
     if (activeMission) {
@@ -1254,14 +1272,30 @@ export default function SpaceBoard() {
               style={{ transform: `translate3d(${playerCoords.x * 32}px, ${playerCoords.y * 32}px, 0)` }}
             >
               {/* Character shadow */}
-              <div className="absolute -bottom-1.5 w-6 h-2 bg-black/45 rounded-full blur-[1px] z-10 pointer-events-none" />
+              {!isSitting && (
+                <div className="absolute -bottom-1.5 w-6 h-2 bg-black/45 rounded-full blur-[1px] z-10 pointer-events-none" />
+              )}
               <div className="absolute w-8 h-8 rounded-full bg-cyan-500/20 blur-xs scale-110 animate-ping" />
               <div className="absolute w-8 h-8 rounded-full border-2 border-cyan-400/40 scale-100" />
-
-              <div className="pixel-char-sprite" data-direction={facingDirection} data-walking={isWalking ? "true" : "false"}>
+              
+              <div 
+                className="pixel-char-sprite" 
+                data-direction={facingDirection} 
+                data-walking={isWalking ? "true" : "false"}
+                data-sitting={isSitting ? "true" : "false"}
+                data-reading={isReading ? "true" : "false"}
+                data-working={isWorkingLaptop ? "true" : "false"}
+                data-talking={isTalking ? "true" : "false"}
+              >
                 <div className="pixel-char-hair" />
                 <div className="pixel-char-face" />
-                <div className="pixel-char-body" />
+                <div className="pixel-char-body">
+                  <div className="pixel-char-arm-l" />
+                  <div className="pixel-char-arm-r" />
+                  <div className="pixel-char-bag" />
+                  <div className="pixel-char-book" />
+                  <div className="pixel-char-laptop" />
+                </div>
               </div>
             </div>
 
@@ -1274,6 +1308,17 @@ export default function SpaceBoard() {
               const hue = Math.abs(hash) % 360;
               const shortId = id.substring(0, 5);
 
+              // Derive action stance states for remote players dynamically based on coordinates and status
+              const remoteIsSitting = (p.y === 2 && (p.x === 2 || p.x === 3)) || (p.y === 16 && (p.x === 21 || p.x === 22));
+              const remoteIsNearDevWorkstation = (p.y >= 13 && p.y <= 15 && p.x >= 2 && p.x <= 8) || (p.y >= 16 && p.y <= 18 && p.x >= 2 && p.x <= 8);
+              const remoteIsWorkingLaptop = p.isTyping && remoteIsNearDevWorkstation;
+              const remoteIsTalking = p.isTyping && !remoteIsNearDevWorkstation;
+              const remoteIsReading = (
+                Math.abs(p.x - BOOKCASES.pandas_library.coords.x) <= 1 && Math.abs(p.y - BOOKCASES.pandas_library.coords.y) <= 1
+              ) || (
+                Math.abs(p.x - BOOKCASES.software_design_rules.coords.x) <= 1 && Math.abs(p.y - BOOKCASES.software_design_rules.coords.y) <= 1
+              );
+
               return (
                 <div
                   key={id}
@@ -1281,7 +1326,9 @@ export default function SpaceBoard() {
                   style={{ transform: `translate3d(${p.x * 32}px, ${p.y * 32}px, 0)` }}
                 >
                   {/* Character shadow */}
-                  <div className="absolute -bottom-1.5 w-6 h-2 bg-black/45 rounded-full blur-[1px] z-10 pointer-events-none" />
+                  {!remoteIsSitting && (
+                    <div className="absolute -bottom-1.5 w-6 h-2 bg-black/45 rounded-full blur-[1px] z-10 pointer-events-none" />
+                  )}
                   <div className="absolute w-8 h-8 rounded-full bg-indigo-500/20 blur-xs scale-110 animate-ping" style={{ filter: `hue-rotate(${hue}deg)` }} />
                   <div className="absolute w-8 h-8 rounded-full border-2 border-indigo-400/40 scale-100" style={{ filter: `hue-rotate(${hue}deg)` }} />
                   
@@ -1289,10 +1336,25 @@ export default function SpaceBoard() {
                     Guest ({shortId})
                   </div>
 
-                  <div className="pixel-char-sprite" data-direction={p.facingDirection} data-walking={p.isWalking ? "true" : "false"} style={{ filter: `hue-rotate(${hue}deg)` }}>
+                  <div 
+                    className="pixel-char-sprite" 
+                    data-direction={p.facingDirection} 
+                    data-walking={p.isWalking ? "true" : "false"}
+                    data-sitting={remoteIsSitting ? "true" : "false"}
+                    data-reading={remoteIsReading ? "true" : "false"}
+                    data-working={remoteIsWorkingLaptop ? "true" : "false"}
+                    data-talking={remoteIsTalking ? "true" : "false"}
+                    style={{ filter: `hue-rotate(${hue}deg)` }}
+                  >
                     <div className="pixel-char-hair" />
                     <div className="pixel-char-face" />
-                    <div className="pixel-char-body" />
+                    <div className="pixel-char-body">
+                      <div className="pixel-char-arm-l" />
+                      <div className="pixel-char-arm-r" />
+                      <div className="pixel-char-bag" />
+                      <div className="pixel-char-book" />
+                      <div className="pixel-char-laptop" />
+                    </div>
                   </div>
                 </div>
               );

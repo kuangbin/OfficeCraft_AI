@@ -776,6 +776,306 @@ a {
   display: none; /* Hide front collar/tie */
 }
 
+/* ================== Phase 11: AI Action Stances & Premium Body Micro-Animations ================== */
+
+/* 1. Fine-Grained Arms & Sleeves */
+.pixel-char-arm-l,
+.pixel-char-arm-r {
+  position: absolute;
+  width: 3px;
+  height: 6px;
+  background: #1d4ed8; /* Blue sleeve matching the jacket */
+  border-radius: 1px;
+  top: 2px;
+  transition: all 0.15s ease-in-out;
+  transform-origin: top center;
+  z-index: 12;
+}
+
+.pixel-char-arm-l {
+  left: -2px;
+}
+
+.pixel-char-arm-r {
+  right: -2px;
+}
+
+/* Skin-toned hands */
+.pixel-char-arm-l::after,
+.pixel-char-arm-r::after {
+  content: "";
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  width: 3px;
+  height: 2px;
+  background: #ffdcc4; /* Skin tone */
+}
+
+/* Hide hands from behind */
+.pixel-char-sprite[data-direction="up"] .pixel-char-arm-l::after,
+.pixel-char-sprite[data-direction="up"] .pixel-char-arm-r::after {
+  display: none;
+}
+
+/* 2. Leather-Brown Briefcase (pixel-char-bag) */
+.pixel-char-bag {
+  position: absolute;
+  left: -4px;
+  top: 6px;
+  width: 5px;
+  height: 4px;
+  background: #7c2d12; /* Leather brown */
+  border-radius: 1px;
+  box-shadow: inset 1px 1px #9a3412, 1px -1px #451a03;
+  transition: all 0.2s ease-in-out;
+  z-index: 14;
+}
+
+/* Briefcase Strap Handle */
+.pixel-char-bag::before {
+  content: "";
+  position: absolute;
+  top: -2px;
+  left: 1px;
+  width: 3px;
+  height: 2px;
+  border: 1px solid #7c2d12;
+  border-bottom: none;
+}
+
+/* Briefcase walking swing & bounce animations (using 2D translate to prevent anti-aliasing blur) */
+.pixel-char-sprite[data-walking="true"] .pixel-char-arm-l {
+  animation: arm-swing-l 0.15s infinite ease-in-out;
+}
+
+.pixel-char-sprite[data-walking="true"] .pixel-char-arm-r {
+  animation: arm-swing-r 0.15s infinite ease-in-out;
+}
+
+.pixel-char-sprite[data-walking="true"] .pixel-char-bag {
+  animation: bag-bounce 0.15s infinite ease-in-out;
+}
+
+@keyframes arm-swing-l {
+  0%, 100% {
+    transform: translateY(1px) translateX(0);
+  }
+  50% {
+    transform: translateY(-1px) translateX(-1px);
+  }
+}
+
+@keyframes arm-swing-r {
+  0%, 100% {
+    transform: translateY(-1px) translateX(1px);
+  }
+  50% {
+    transform: translateY(1px) translateX(0);
+  }
+}
+
+@keyframes bag-bounce {
+  0%, 100% {
+    transform: translateY(1px) translateX(0);
+  }
+  50% {
+    transform: translateY(-2px) translateX(-1px);
+  }
+}
+
+/* 3. Sofa Sitting Stance (data-sitting="true") */
+.pixel-char-sprite[data-sitting="true"] {
+  transform: scale(1.1) translateY(4px);
+}
+
+/* Shorten/retract legs when sitting */
+.pixel-char-sprite[data-sitting="true"] .pixel-char-body::after {
+  height: 2px;
+  bottom: -2px;
+  box-shadow: none !important; /* Retract sneaks entirely */
+}
+
+/* Place arms over lap when sitting */
+.pixel-char-sprite[data-sitting="true"] .pixel-char-arm-l {
+  transform: translateX(4px) translateY(1px);
+}
+
+.pixel-char-sprite[data-sitting="true"] .pixel-char-arm-r {
+  transform: translateX(-4px) translateY(1px);
+}
+
+/* Hide briefcase when sitting */
+.pixel-char-sprite[data-sitting="true"] .pixel-char-bag {
+  display: none !important;
+}
+
+/* 4. Bookcase Reading Stance (data-reading="true") */
+.pixel-char-book {
+  display: none;
+  position: absolute;
+  left: 5px;
+  top: 5px;
+  width: 8px;
+  height: 5px;
+  background: #312e81; /* Premium deep indigo cover */
+  border-radius: 1px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  z-index: 15;
+}
+
+/* White pages overlay */
+.pixel-char-book::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 1px;
+  width: 6px;
+  height: 4px;
+  background: #ffffff;
+  border-radius: 0.5px;
+}
+
+/* Spine binder line */
+.pixel-char-book::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 3px;
+  width: 1px;
+  height: 4px;
+  background: #9a3412;
+}
+
+.pixel-char-sprite[data-reading="true"] .pixel-char-book {
+  display: block;
+  animation: book-flip-bounce 0.8s infinite ease-in-out;
+}
+
+/* Arms hold book inward */
+.pixel-char-sprite[data-reading="true"] .pixel-char-arm-l {
+  transform: translateX(4px) translateY(-1px);
+}
+
+.pixel-char-sprite[data-reading="true"] .pixel-char-arm-r {
+  transform: translateX(-4px) translateY(-1px);
+}
+
+/* Hide book and screen elements when looking from behind */
+.pixel-char-sprite[data-direction="up"] .pixel-char-book,
+.pixel-char-sprite[data-direction="up"] .pixel-char-laptop {
+  display: none !important;
+}
+
+/* Hide briefcase when performing action stances */
+.pixel-char-sprite[data-reading="true"] .pixel-char-bag,
+.pixel-char-sprite[data-working="true"] .pixel-char-bag,
+.pixel-char-sprite[data-talking="true"] .pixel-char-bag {
+  display: none !important;
+}
+
+@keyframes book-flip-bounce {
+  0%, 100% {
+    transform: translateY(0) scaleY(1);
+  }
+  50% {
+    transform: translateY(-1px) scaleY(0.85);
+  }
+}
+
+/* 5. Furious Laptop Typing Stance (data-working="true") */
+.pixel-char-laptop {
+  display: none;
+  position: absolute;
+  left: 5px;
+  top: 5px;
+  width: 8px;
+  height: 5px;
+  background: #0f172a; /* Slate black laptop lid */
+  border-radius: 1px;
+  z-index: 15;
+}
+
+/* Cyan glowing screen */
+.pixel-char-laptop::before {
+  content: "";
+  position: absolute;
+  top: -3px;
+  left: 0;
+  width: 8px;
+  height: 4px;
+  background: #22d3ee; /* Vibrant Cyan Glow */
+  box-shadow: 0 0 6px #22d3ee, 0 0 12px rgba(34, 211, 238, 0.45);
+  border-radius: 0.5px;
+}
+
+/* Keyboard base details */
+.pixel-char-laptop::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 0;
+  width: 8px;
+  height: 3px;
+  background: #1e293b;
+}
+
+.pixel-char-sprite[data-working="true"] .pixel-char-laptop {
+  display: block;
+}
+
+/* Extremely rapid alternating typing motions */
+.pixel-char-sprite[data-working="true"] .pixel-char-arm-l {
+  animation: arm-type-l 0.08s infinite alternate ease-in-out;
+}
+
+.pixel-char-sprite[data-working="true"] .pixel-char-arm-r {
+  animation: arm-type-r 0.08s infinite alternate alternate-reverse ease-in-out;
+}
+
+@keyframes arm-type-l {
+  0% {
+    transform: translateX(4px) translateY(-1px);
+  }
+  100% {
+    transform: translateX(5px) translateY(-2px);
+  }
+}
+
+@keyframes arm-type-r {
+  0% {
+    transform: translateX(-5px) translateY(-2px);
+  }
+  100% {
+    transform: translateX(-4px) translateY(-1px);
+  }
+}
+
+/* 6. NPC Dialog/Conversational Gesturing Stance (data-talking="true") */
+.pixel-char-sprite[data-talking="true"] .pixel-char-arm-l {
+  animation: arm-talk-gesture 0.7s infinite ease-in-out;
+}
+
+.pixel-char-sprite[data-talking="true"] .pixel-char-arm-r {
+  transform: translateY(1px); /* Relaxed hanging */
+}
+
+@keyframes arm-talk-gesture {
+  0%, 100% {
+    transform: translateY(0) translateX(1px);
+  }
+  25% {
+    transform: translateY(-2px) translateX(2.5px);
+  }
+  50% {
+    transform: translateY(-3px) translateX(0);
+  }
+  75% {
+    transform: translateY(-1px) translateX(-1px);
+  }
+}
+
+
 /* ========== Phase 8: Premium Spaceship Terminal Cockpit UI ========== */
 
 /* Glass Cockpit styling with deep backdrop-blur, subtle inner glow and custom neon border outlines */
