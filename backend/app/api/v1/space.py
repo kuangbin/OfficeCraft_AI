@@ -317,6 +317,12 @@ async def websocket_endpoint(websocket: WebSocket, player_id: str | None = None)
         await manager.update_player_state(player_id, {
             "isTyping": data.get("isTyping", False)
         })
+      elif msg_type == "CHAT":
+        await manager.broadcast({
+            "type": "PLAYER_CHAT",
+            "player_id": player_id,
+            "message": data.get("message", "")
+        }, exclude_player_id=player_id)
   except WebSocketDisconnect:
     manager.disconnect(player_id)
     await manager.broadcast({

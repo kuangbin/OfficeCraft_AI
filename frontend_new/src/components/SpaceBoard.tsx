@@ -14,6 +14,7 @@ import CareerWorldMap, { CareerMapIsland } from '@/components/lobby/CareerWorldM
 import CareerPreviewPanel from '@/components/lobby/CareerPreviewPanel';
 import { CareerSkillTree } from '@/components/career';
 import { CareerIsland, Mission, MissionStatus } from '@/types';
+import { getPlayerId } from '@/services/identity';
 
 // Map area labels
 const ZONES = {
@@ -107,6 +108,10 @@ export default function SpaceBoard() {
     disconnectWebSocket,
     setLocalTyping,
     setAmbientTheme,
+    chatMessages: spatialChatMessages,
+    localLastMessage,
+    localLastMessageTime,
+    sendChatMessage,
   } = useSpaceStore();
 
   const { currentCareerId, totalXp, selectCareer, addXp } = useUserStore();
@@ -179,6 +184,19 @@ export default function SpaceBoard() {
   const [newPostTitle, setNewPostTitle] = useState('');
   const [newPostContent, setNewPostContent] = useState('');
   const [showCreatePost, setShowPostDialog] = useState(false);
+
+  // Spatial Chat local states & refs
+  const [spatialChatInput, setSpatialChatInput] = useState('');
+  const [isSpatialChatCollapsed, setIsSpatialChatCollapsed] = useState(false);
+  const spatialChatEndRef = useRef<HTMLDivElement>(null);
+  const spatialChatInputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-scroll spatial chat
+  useEffect(() => {
+    if (spatialChatEndRef.current) {
+      spatialChatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [spatialChatMessages]);
 
   // Proximity calculations
   const isAdjacentToTable = useMemo(() => {
@@ -343,8 +361,18 @@ export default function SpaceBoard() {
   // Handle Keyboard Inputs
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
-      // Ignore if user is writing in inputs
+      // Ignore if user is writing in inputs, but allow Escape to blur
       if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') {
+        if (e.key === 'Escape') {
+          (document.activeElement as HTMLElement).blur();
+        }
+        return;
+      }
+
+      // Focus spatial chat input on pressing 't'
+      if (e.key.toLowerCase() === 't') {
+        e.preventDefault();
+        spatialChatInputRef.current?.focus();
         return;
       }
 
@@ -414,6 +442,11 @@ export default function SpaceBoard() {
             if (npc) {
               startConversation(npc);
             }
+            return;
+          }
+          // Focus chat input on Enter if not near any triggers
+          if (e.key === 'Enter') {
+            spatialChatInputRef.current?.focus();
           }
           return;
         default:
@@ -1011,6 +1044,119 @@ export default function SpaceBoard() {
         </button>
       </div>
 
+      {/* ================== GLASSMORPHIC SPATIAL CHAT HUD ================== */}
+      <div 
+        className={`fixed bottom-6 z-40 w-[320px] transition-all duration-300 font-mono select-none ${
+          isLeftPanelOpen ? 'left-[315px]' : 'left-6'
+        }`}
+      >
+        <div className="bg-slate-950/85 backdrop-blur-md border border-slate-800/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col pointer-events-auto">
+          {/* Header */}
+          <div className="bg-slate-950/60 border-b border-slate-800/50 px-4 py-2.5 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-sm animate-pulse">💬</span>
+              <div>
+                <span className="text-[9px] font-bold text-slate-500 tracking-wider">SPATIAL CHAT</span>
+                <div className="text-[10px] text-cyan-400 font-bold flex items-center gap-1 leading-none mt-0.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+                  <span>{1 + Object.keys(remotePlayers).length} 玩家在线</span>
+                </div>
+              </div>
+            </div>
+            
+            <button 
+              onClick={() => {
+                setIsSpatialChatCollapsed(!isSpatialChatCollapsed);
+                audioManager.playOpen();
+              }}
+              className="text-xs text-slate-400 hover:text-cyan-400 px-1.5 py-0.5 rounded transition-colors"
+            >
+              {isSpatialChatCollapsed ? '[展开]' : '[折叠]'}
+            </button>
+          </div>
+
+          {/* Chat Messages Feed & Input */}
+          {!isSpatialChatCollapsed && (
+            <>
+              {/* Message scroll list */}
+              <div className="h-44 overflow-y-auto p-3 space-y-2 scrollbar-thin">
+                {spatialChatMessages.length === 0 ? (
+                  <div className="text-[10px] text-slate-500 italic text-center py-6">
+                    暂无聊天消息。键盘按 T 键或直接在下方输入聊天内容
+                  </div>
+                ) : (
+                  spatialChatMessages.map((msg) => {
+                    const isMe = msg.playerId === 'local' || msg.playerId === getPlayerId();
+                    
+                    let hash = 0;
+                    for (let i = 0; i < msg.playerId.length; i++) {
+                      hash = msg.playerId.charCodeAt(i) + ((hash << 5) - hash);
+                    }
+                    const hue = Math.abs(hash) % 360;
+                    const shortId = msg.playerId.substring(0, 5);
+
+                    return (
+                      <div key={msg.id} className="text-xs flex flex-col gap-0.5">
+                        <div className="flex items-center justify-between text-[8px] text-slate-500">
+                          <span 
+                            className={`font-bold ${isMe ? 'text-cyan-400' : 'text-indigo-400'}`}
+                            style={isMe ? {} : { filter: `hue-rotate(${hue}deg)` }}
+                          >
+                            {isMe ? '你 (You)' : `Guest (${shortId})`}
+                          </span>
+                          <span>{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                        </div>
+                        <div 
+                          className={`p-1.5 rounded-lg border text-[11px] break-words ${
+                            isMe 
+                              ? 'bg-cyan-950/20 border-cyan-800/40 text-cyan-200' 
+                              : 'bg-indigo-950/10 border-indigo-950/40 text-indigo-200'
+                          }`}
+                          style={isMe ? {} : { filter: `hue-rotate(${hue}deg)` }}
+                        >
+                          {msg.message}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+                <div ref={spatialChatEndRef} />
+              </div>
+
+              {/* Chat Input Form */}
+              <form 
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!spatialChatInput.trim()) return;
+                  sendChatMessage(spatialChatInput.trim());
+                  setSpatialChatInput('');
+                }}
+                className="p-2 border-t border-slate-800/50 flex gap-1.5 bg-slate-950/40"
+              >
+                <input
+                  ref={spatialChatInputRef}
+                  type="text"
+                  value={spatialChatInput}
+                  onChange={(e) => setSpatialChatInput(e.target.value)}
+                  onFocus={() => setLocalTyping(true)}
+                  onBlur={() => setLocalTyping(false)}
+                  placeholder="说点什么... (Enter 发送)"
+                  className="flex-1 bg-slate-900 border border-slate-800 rounded-lg text-[11px] text-slate-200 px-2.5 py-1.5 focus:outline-none focus:border-cyan-500/80 transition-colors"
+                  maxLength={100}
+                />
+                <button
+                  type="submit"
+                  disabled={!spatialChatInput.trim()}
+                  className="px-3 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 font-bold text-xs rounded-lg transition-colors"
+                >
+                  发送
+                </button>
+              </form>
+            </>
+          )}
+        </div>
+      </div>
+
       {/* 4. FLOATING PROXIMITY SENSOR RADAR TIP */}
       <div className={`fixed bottom-8 left-1/2 -translate-x-1/2 z-30 font-mono transition-all duration-300 ${
         showSensorHud ? 'translate-y-0 opacity-100' : 'translate-y-12 opacity-0 pointer-events-none'
@@ -1278,6 +1424,19 @@ export default function SpaceBoard() {
               <div className="absolute w-8 h-8 rounded-full bg-cyan-500/20 blur-xs scale-110 animate-ping" />
               <div className="absolute w-8 h-8 rounded-full border-2 border-cyan-400/40 scale-100" />
               
+              <div className="absolute -top-6 bg-slate-950/90 border border-cyan-500/80 text-[8px] text-cyan-300 py-0.5 px-1.5 font-mono rounded select-none whitespace-nowrap z-30">
+                You
+              </div>
+
+              {localLastMessage && localLastMessageTime && (Date.now() - localLastMessageTime < 5000) && (
+                <div key={localLastMessageTime} className="absolute bottom-[48px] flex flex-col items-center z-50 animate-speech-bubble pointer-events-none">
+                  <div className="bg-slate-950/95 border-2 border-cyan-400 text-[10px] text-cyan-200 font-mono py-1 px-2 rounded-md shadow-2xl max-w-[140px] text-center break-words backdrop-blur-sm relative">
+                    {localLastMessage}
+                  </div>
+                  <div className="w-1.5 h-1.5 bg-slate-950 border-r-2 border-b-2 border-cyan-400 rotate-45 -mt-[4px] relative z-10" />
+                </div>
+              )}
+
               <div 
                 className="pixel-char-sprite" 
                 data-direction={facingDirection} 
@@ -1335,6 +1494,15 @@ export default function SpaceBoard() {
                   <div className="absolute -top-6 bg-slate-950/90 border border-slate-700 text-[8px] text-slate-300 py-0.5 px-1.5 font-mono rounded select-none whitespace-nowrap">
                     Guest ({shortId})
                   </div>
+
+                  {p.lastMessage && p.lastMessageTime && (Date.now() - p.lastMessageTime < 5000) && (
+                    <div key={p.lastMessageTime} className="absolute bottom-[48px] flex flex-col items-center z-50 animate-speech-bubble pointer-events-none">
+                      <div className="bg-slate-950/95 border-2 border-indigo-400 text-[10px] text-indigo-200 font-mono py-1 px-2 rounded-md shadow-2xl max-w-[140px] text-center break-words backdrop-blur-sm relative" style={{ filter: `hue-rotate(${hue}deg)` }}>
+                        {p.lastMessage}
+                      </div>
+                      <div className="w-1.5 h-1.5 bg-slate-950 border-r-2 border-b-2 border-indigo-400 rotate-45 -mt-[4px] relative z-10" style={{ filter: `hue-rotate(${hue}deg)` }} />
+                    </div>
+                  )}
 
                   <div 
                     className="pixel-char-sprite" 

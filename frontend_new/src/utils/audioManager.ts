@@ -273,6 +273,35 @@ class AudioManager {
       });
     }
   }
+
+  /**
+   * Synthesizes a rapid, delightful dual-tone 8-bit digital chirp for chat messages.
+   */
+  public playChatChirp() {
+    this.initContext();
+    if (this.isMuted || !this.ctx || this.volume <= 0) return;
+
+    const now = this.ctx.currentTime;
+    const notes = [880, 1318.51]; // A5 and E6
+    notes.forEach((freq, idx) => {
+      const osc = this.ctx!.createOscillator();
+      const gainNode = this.ctx!.createGain();
+      const startDelay = idx * 0.05;
+      const dur = 0.08;
+
+      osc.type = 'sine'; // Gentle organic sound
+      osc.frequency.setValueAtTime(freq, now + startDelay);
+
+      gainNode.gain.setValueAtTime(0.04 * this.volume, now + startDelay);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, now + startDelay + dur);
+
+      osc.connect(gainNode);
+      gainNode.connect(this.ctx!.destination);
+
+      osc.start(now + startDelay);
+      osc.stop(now + startDelay + dur);
+    });
+  }
 }
 
 export const audioManager = new AudioManager();

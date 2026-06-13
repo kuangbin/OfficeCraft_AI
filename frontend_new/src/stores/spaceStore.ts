@@ -12,6 +12,15 @@ export interface RemotePlayerState {
   facingDirection: 'down' | 'up' | 'left' | 'right';
   isWalking: boolean;
   isTyping: boolean;
+  lastMessage?: string;
+  lastMessageTime?: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  playerId: string;
+  message: string;
+  timestamp: number;
 }
 
 const getWebSocketUrl = () => {
@@ -38,6 +47,11 @@ interface SpaceStore {
   remotePlayers: Record<string, RemotePlayerState>;
   socket: WebSocket | null;
 
+  // Spatial Chat fields
+  chatMessages: ChatMessage[];
+  localLastMessage: string | null;
+  localLastMessageTime: number | null;
+
   // Actions
   syncFromBackend: () => Promise<void>;
   movePlayer: (dx: number, dy: number) => Promise<string | null>;
@@ -48,6 +62,7 @@ interface SpaceStore {
   connectWebSocket: () => void;
   disconnectWebSocket: () => void;
   setLocalTyping: (isTyping: boolean) => void;
+  sendChatMessage: (message: string) => void;
 }
 
 function createCollisionMatrix(): number[][] {
@@ -123,6 +138,9 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
   isWalking: false,
   remotePlayers: {},
   socket: null,
+  chatMessages: [],
+  localLastMessage: null,
+  localLastMessageTime: null,
 
   syncFromBackend: async () => {
     set({ isLoading: true });
@@ -311,6 +329,28 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
               },
             },
           }));
+        } else if (type === 'PLAYER_CHAT') {
+          const { player_id, message } = data;
+          const timestamp = Date.now();
+          const newMsg: ChatMessage = {
+            id: `${player_id}-${timestamp}`,
+            playerId: player_id,
+            message,
+            timestamp,
+          };
+          audioManager.playChatChirp();
+          set((prev) => ({
+            chatMessages: [...prev.chatMessages, newMsg],
+            remotePlayers: {
+              ...prev.remotePlayers,
+              [player_id]: {
+                ...(prev.remotePlayers[player_id] || {}),
+                id: player_id,
+                lastMessage: message,
+                lastMessageTime: timestamp,
+              },
+            },
+          }));
         } else if (type === 'PLAYER_LEAVE') {
           const { player_id } = data;
           set((prev) => {
@@ -353,6 +393,33 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
     const { socket } = get();
     if (socket && socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify({ type: 'TYPING', isTyping }));
+    }
+  },
+
+  sendChatMessage: (message: string) => {
+    const { socket } = get();
+    const playerId = getPlayerId() || 'local';
+    const timestamp = Date.now();
+    const newMsg: ChatMessage = {
+      id: `local-${timestamp}`,
+      playerId,
+      message,
+      timestamp,
+    };
+
+    audioManager.playTypewriter();
+
+    set((prev) => ({
+      chatMessages: [...prev.chatMessages, newMsg],
+      localLastMessage: message,
+      localLastMessageTime: timestamp,
+    }));
+
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({
+        type: 'CHAT',
+        message
+      }));
     }
   },
 }));

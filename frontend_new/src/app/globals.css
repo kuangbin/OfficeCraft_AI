@@ -1249,3 +1249,44 @@ a {
   image-rendering: pixelated;
 }
 
+/* ========== Phase 12: Co-Op Real-Time Spatial Chat System, Interactive Speech Bubbles ========== */
+
+@keyframes speechBubbleAnimation {
+  0% {
+    opacity: 0;
+    transform: scale(0.6) translateY(8px);
+  }
+  3% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  90% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.8) translateY(-8px);
+  }
+}
+
+.animate-speech-bubble {
+  animation: speechBubbleAnimation 5s forwards cubic-bezier(0.175, 0.885, 0.32, 1.15);
+}
+
+/* Chat scrollbar design */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.3);
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.2);
+  border-radius: 9999px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.4);
+}
+
