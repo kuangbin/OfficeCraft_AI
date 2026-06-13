@@ -65,7 +65,7 @@ interface SpaceStore {
   movePlayer: (dx: number, dy: number) => Promise<string | null>;
   setAmbientTheme: (theme: string) => void;
   triggerBookcaseSearch: (bookcaseId: string, query: string) => Promise<any>;
-  triggerAnomaly: () => Promise<void>;
+  triggerAnomaly: (anomalyId?: string) => Promise<void>;
   resolveAnomaly: (script: string) => Promise<{ status: string; feedback: string; xp_gained: number }>;
 
   // Multiplayer actions
@@ -283,14 +283,19 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
     }
   },
 
-  triggerAnomaly: async () => {
+  triggerAnomaly: async (anomalyId?: string) => {
     try {
-      const anomaly = await api.triggerSpaceAnomaly();
+      const anomaly = await api.triggerSpaceAnomaly(anomalyId);
+      const isBreaker = anomaly.anomaly_id === 'service_breaker_trip';
       set({
         activeAnomaly: anomaly,
-        ambientTheme: 'alert-red',
+        ambientTheme: isBreaker ? 'alert-orange' : 'alert-red',
       });
-      audioManager.playAlarmSiren();
+      if (isBreaker) {
+        audioManager.playBreakerTrip();
+      } else {
+        audioManager.playAlarmSiren();
+      }
     } catch (error) {
       console.error('Failed to trigger space anomaly:', error);
       throw error;
@@ -299,13 +304,18 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
 
   resolveAnomaly: async (script: string) => {
     try {
+      const isBreaker = get().activeAnomaly?.anomaly_id === 'service_breaker_trip';
       const response = await api.resolveSpaceAnomaly(script);
       if (response.status === 'success') {
         set({
           activeAnomaly: null,
           ambientTheme: 'default',
         });
-        audioManager.playCelebrateGold();
+        if (isBreaker) {
+          audioManager.playBreakerRestore();
+        } else {
+          audioManager.playCelebrateGold();
+        }
         // Sync user state to update XP
         await useUserStore.getState().syncFromBackend();
       }
@@ -413,13 +423,23 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
           });
         } else if (type === 'ANOMALY_TRIGGER') {
           const { anomaly } = data;
-          audioManager.playAlarmSiren();
+          const isBreaker = anomaly.anomaly_id === 'service_breaker_trip';
+          if (isBreaker) {
+            audioManager.playBreakerTrip();
+          } else {
+            audioManager.playAlarmSiren();
+          }
           set({
             activeAnomaly: anomaly,
-            ambientTheme: 'alert-red',
+            ambientTheme: isBreaker ? 'alert-orange' : 'alert-red',
           });
         } else if (type === 'ANOMALY_RESOLVED') {
-          audioManager.playCelebrateGold();
+          const isBreaker = get().activeAnomaly?.anomaly_id === 'service_breaker_trip';
+          if (isBreaker) {
+            audioManager.playBreakerRestore();
+          } else {
+            audioManager.playCelebrateGold();
+          }
           set({
             activeAnomaly: null,
             ambientTheme: 'default',

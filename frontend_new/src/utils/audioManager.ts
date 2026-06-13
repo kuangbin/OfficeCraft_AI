@@ -393,6 +393,76 @@ class AudioManager {
   public playCelebrateGold() {
     this.playThemeTransition('celebrate-gold');
   }
+
+  /**
+   * Synthesizes a native Web Audio 8-bit relay disengage.
+   * Generates a sharp mechanical click, followed by a sweeping descending saw wave.
+   */
+  public playBreakerTrip() {
+    this.initContext();
+    if (this.isMuted || !this.ctx || this.volume <= 0) return;
+
+    const now = this.ctx.currentTime;
+
+    // 1. Sharp mechanical click
+    const clickOsc = this.ctx.createOscillator();
+    const clickGain = this.ctx.createGain();
+    clickOsc.type = 'triangle';
+    clickOsc.frequency.setValueAtTime(80, now);
+    clickGain.gain.setValueAtTime(0.2 * this.volume, now);
+    clickGain.gain.exponentialRampToValueAtTime(0.001, now + 0.015);
+    clickOsc.connect(clickGain);
+    clickGain.connect(this.ctx.destination);
+    clickOsc.start(now);
+    clickOsc.stop(now + 0.015);
+
+    // 2. Descending motor hum / relay trip sweep
+    const sweepOsc = this.ctx.createOscillator();
+    const sweepGain = this.ctx.createGain();
+    sweepOsc.type = 'sawtooth';
+    sweepOsc.frequency.setValueAtTime(380, now);
+    sweepOsc.frequency.exponentialRampToValueAtTime(40, now + 0.80);
+    sweepGain.gain.setValueAtTime(0.06 * this.volume, now);
+    sweepGain.gain.exponentialRampToValueAtTime(0.001, now + 0.80);
+    sweepOsc.connect(sweepGain);
+    sweepGain.connect(this.ctx.destination);
+    sweepOsc.start(now + 0.01);
+    sweepOsc.stop(now + 0.81);
+  }
+
+  /**
+   * Synthesizes a rising triple digital chirp representing power grid restoration.
+   */
+  public playBreakerRestore() {
+    this.initContext();
+    if (this.isMuted || !this.ctx || this.volume <= 0) return;
+
+    const now = this.ctx.currentTime;
+    const sweeps = [
+      { start: 440, end: 880, delay: 0 },
+      { start: 554.37, end: 1108.7, delay: 0.15 },
+      { start: 659.25, end: 1318.5, delay: 0.30 },
+    ];
+
+    sweeps.forEach((sweep) => {
+      const osc = this.ctx!.createOscillator();
+      const gainNode = this.ctx!.createGain();
+      const startAt = now + sweep.delay;
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(sweep.start, startAt);
+      osc.frequency.exponentialRampToValueAtTime(sweep.end, startAt + 0.12);
+
+      gainNode.gain.setValueAtTime(0.05 * this.volume, startAt);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, startAt + 0.12);
+
+      osc.connect(gainNode);
+      gainNode.connect(this.ctx!.destination);
+
+      osc.start(startAt);
+      osc.stop(startAt + 0.12);
+    });
+  }
 }
 
 export const audioManager = new AudioManager();

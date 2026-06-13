@@ -68,22 +68,35 @@ async def get_space_state(
     )
 
   # Determine environmental lighting theme:
-  # - If active anomaly exists and is active: "alert-red"
+  # - If active anomaly is "service_breaker_trip": "alert-orange"
+  # - Else if active anomaly exists and is active: "alert-red"
   # - Else if active mission exists: default to "quiet-blue" (study/development focus)
   # - Else: "default"
   ambient_theme = "quiet-blue" if active_mission else "default"
   if user.active_anomaly and user.anomaly_status == "active":
-    ambient_theme = "alert-red"
+    if user.active_anomaly == "service_breaker_trip":
+      ambient_theme = "alert-orange"
+    else:
+      ambient_theme = "alert-red"
 
   active_anomaly = None
   if user.active_anomaly and user.anomaly_status == "active":
-    active_anomaly = schemas.SpaceAnomaly(
-        anomaly_id=user.active_anomaly,
-        title="数据库 CPU 100% 满载故障",
-        description="数据库进程因大量的 N+1 关联查询及未优化的大表 JOIN 发生死锁。连接池耗尽导致物理服务器 CPU 100% 满载、严重过热！",
-        cpu_load=user.anomaly_cpu,
-        status=user.anomaly_status,
-    )
+    if user.active_anomaly == "service_breaker_trip":
+      active_anomaly = schemas.SpaceAnomaly(
+          anomaly_id=user.active_anomaly,
+          title="分布式微服务 B 熔断器异常脱扣",
+          description="微服务 B 的底层网关接口响应大幅超时，导致调用队列严重阻塞，触发高可用分布式熔断器异常脱扣，部分依赖服务陷入级联雪崩！",
+          cpu_load=user.anomaly_cpu,
+          status=user.anomaly_status,
+      )
+    else:
+      active_anomaly = schemas.SpaceAnomaly(
+          anomaly_id=user.active_anomaly,
+          title="数据库 CPU 100% 满载故障",
+          description="数据库进程因大量的 N+1 关联查询及未优化的大表 JOIN 发生死锁。连接池耗尽导致物理服务器 CPU 100% 满载、严重过热！",
+          cpu_load=user.anomaly_cpu,
+          status=user.anomaly_status,
+      )
 
   # Static map assets URL
   map_assets_url = "http://localhost:8000/static/map_tile_v1.png"
@@ -236,42 +249,60 @@ async def arbitrate_meeting_route(
 
 @router.post(
     "/anomaly/trigger",
-    summary="模拟触发数据库 CPU 满载突发故障",
+    summary="模拟触发突发系统故障",
     response_model=schemas.SpaceAnomaly,
 )
 async def trigger_anomaly_endpoint(
+    request: schemas.SpaceAnomalyTriggerRequest = Body(None),
     db: Session = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
 ) -> schemas.SpaceAnomaly:
-  """Triggers database P0 CPU overload anomaly and broadcasts alert to other players."""
+  """Triggers database P0 CPU overload or service breaker trip anomaly and broadcasts alert to other players."""
   user = db.query(models.User).filter_by(id=user_id).first()
   if not user:
     raise HTTPException(status_code=404, detail="User not found.")
 
-  user.active_anomaly = "db_cpu_overload"
-  user.anomaly_cpu = 100
-  user.anomaly_status = "active"
-  db.commit()
+  anomaly_id = request.anomaly_id if request else "db_cpu_overload"
 
-  # Construct anomaly response
-  anomaly = schemas.SpaceAnomaly(
-      anomaly_id="db_cpu_overload",
-      title="数据库 CPU 100% 满载故障",
-      description="数据库进程因大量的 N+1 关联查询及未优化的大表 JOIN 发生死锁。连接池耗尽导致物理服务器 CPU 100% 满载、严重过热！",
-      cpu_load=100,
-      status="active",
-  )
+  if anomaly_id == "service_breaker_trip":
+    user.active_anomaly = "service_breaker_trip"
+    user.anomaly_cpu = 88
+    user.anomaly_status = "active"
+    db.commit()
+
+    # Construct anomaly response
+    anomaly = schemas.SpaceAnomaly(
+        anomaly_id="service_breaker_trip",
+        title="分布式熔断脱扣故障",
+        description="微服务 B 由于网络抖动突发心跳超时，导致分布式系统出现级联雪崩！已自动触发脱扣熔断保护，请前往 Archive Room (18, 15) 进行应急抢修。",
+        cpu_load=88,
+        status="active",
+    )
+  else:
+    user.active_anomaly = "db_cpu_overload"
+    user.anomaly_cpu = 100
+    user.anomaly_status = "active"
+    db.commit()
+
+    # Construct anomaly response
+    anomaly = schemas.SpaceAnomaly(
+        anomaly_id="db_cpu_overload",
+        title="数据库 CPU 100% 满载故障",
+        description="数据库进程因大量的 N+1 关联查询及未优化的大表 JOIN 发生死锁。连接池耗尽导致物理服务器 CPU 100% 满载、严重过热！",
+        cpu_load=100,
+        status="active",
+    )
 
   # Broadcast trigger packet via WebSocket to alert other sessions
   try:
     await manager.broadcast({
         "type": "ANOMALY_TRIGGER",
         "anomaly": {
-            "anomaly_id": "db_cpu_overload",
-            "title": "数据库 CPU 100% 满载故障",
-            "description": "数据库进程因大量的 N+1 关联查询及未优化的大表 JOIN 发生死锁。连接池耗尽导致物理服务器 CPU 100% 满载、严重过热！",
-            "cpu_load": 100,
-            "status": "active"
+            "anomaly_id": anomaly.anomaly_id,
+            "title": anomaly.title,
+            "description": anomaly.description,
+            "cpu_load": anomaly.cpu_load,
+            "status": anomaly.status
         }
     })
   except Exception as e:
@@ -290,7 +321,7 @@ async def resolve_anomaly_endpoint(
     db: Session = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
 ) -> schemas.SpaceAnomalyResolveResponse:
-  """Evaluates script keywords for SQL indexes or Python try-except blocks, and clears anomaly."""
+  """Evaluates script keywords for SQL indexes, Python try-except blocks, or circuit breaker decorators, and clears anomaly."""
   user = db.query(models.User).filter_by(id=user_id).first()
   if not user:
     raise HTTPException(status_code=404, detail="User not found.")
@@ -304,31 +335,56 @@ async def resolve_anomaly_endpoint(
 
   script = request.script.lower()
 
-  # Keyword evaluation
-  is_sql_index = "create index" in script and "on" in script
-  is_python_exception = "try" in script and "except" in script
+  if user.active_anomaly == "service_breaker_trip":
+    # Keyword evaluation for distributed circuit breaker
+    is_circuit_breaker = "circuitbreaker" in script or "breaker" in script
+    is_fallback = "fallback" in script
+    is_open = "open" in script
+    is_closed = "closed" in script
 
-  if is_sql_index:
-    feedback = (
-        "✓ 优化成功！已检测到 SQL 索引创建语句。成功为高频查询列创建索引，"
-        "查询检索复杂度从 O(N) 降至 O(log N)，彻底消除全表扫描，CPU 负载降回 12%！"
-    )
-    status = "success"
-    xp_gained = 50
-  elif is_python_exception:
-    feedback = (
-        "✓ 修复成功！已检测到 Python 异常捕获块。成功捕获连接超时并调用了 "
-        "db.rollback() 释放死锁连接，连接池耗尽危机完全解除，CPU 负载降回 15%！"
-    )
-    status = "success"
-    xp_gained = 50
+    is_breaker_resolved = is_circuit_breaker and is_fallback and is_open and is_closed
+
+    if is_breaker_resolved:
+      feedback = (
+          "✓ 修复成功！已检测到分布式熔断器（CircuitBreaker）及 fallback 回退方法定义，"
+          "并正确包含熔断器 open 与 closed 状态逻辑！微服务 B 保护链条重新闭合，系统恢复正常，"
+          "CPU 负载降回 8%！"
+      )
+      status = "success"
+      xp_gained = 80
+    else:
+      feedback = (
+          "❌ 诊断失败！未检测到完整的分布式熔断器 (circuitbreaker/breaker)、"
+          "回退方法 (fallback) 以及状态转换声明 (open, closed)。故障依然存在！"
+      )
+      status = "fail"
+      xp_gained = 0
   else:
-    feedback = (
-        "❌ 诊断失败！未检测到有效的异常捕获块 (try-except) 语法，"
-        "或未检测到针对数据大表进行索引创建的优化 (CREATE INDEX ... ON)。故障依然存在！"
-    )
-    status = "fail"
-    xp_gained = 0
+    # Existing db_cpu_overload logic
+    is_sql_index = "create index" in script and "on" in script
+    is_python_exception = "try" in script and "except" in script
+
+    if is_sql_index:
+      feedback = (
+          "✓ 优化成功！已检测到 SQL 索引创建语句。成功为高频查询列创建索引，"
+          "查询检索复杂度从 O(N) 降至 O(log N)，彻底消除全表扫描，CPU 负载降回 12%！"
+      )
+      status = "success"
+      xp_gained = 50
+    elif is_python_exception:
+      feedback = (
+          "✓ 修复成功！已检测到 Python 异常捕获块。成功捕获连接超时并调用了 "
+          "db.rollback() 释放死锁连接，连接池耗尽危机完全解除，CPU 负载降回 15%！"
+      )
+      status = "success"
+      xp_gained = 50
+    else:
+      feedback = (
+          "❌ 诊断失败！未检测到有效的异常捕获块 (try-except) 语法，"
+          "或未检测到针对数据大表进行索引创建的优化 (CREATE INDEX ... ON)。故障依然存在！"
+      )
+      status = "fail"
+      xp_gained = 0
 
   if status == "success":
     user.active_anomaly = None

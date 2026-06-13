@@ -349,6 +349,12 @@ class SpaceArbitrateResponse(BaseModel):
   feedback: str
 
 
+class SpaceAnomalyTriggerRequest(BaseModel):
+  """Request schema for triggering an anomaly."""
+
+  anomaly_id: str = "db_cpu_overload"
+
+
 class SpaceAnomalyResolveRequest(BaseModel):
   """Request schema for anomaly resolution."""
 

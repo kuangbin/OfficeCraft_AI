@@ -1329,6 +1329,45 @@ a {
   animation: server-rack-error-glow 1s ease-in-out infinite !important;
 }
 
+/* ========== Phase 15: Distributed Circuit Breakers and Orange Alert Mode ========== */
+@keyframes ambient-breathing-orange {
+  0%, 100% {
+    background-color: rgba(249, 115, 22, 0.10);
+    box-shadow: inset 0 0 100px rgba(249, 115, 22, 0.30);
+  }
+  50% {
+    background-color: rgba(249, 115, 22, 0.20);
+    box-shadow: inset 0 0 160px rgba(249, 115, 22, 0.55);
+  }
+}
+
+.ambient-theme-alert-orange {
+  position: absolute;
+  inset: 0;
+  z-index: 25; /* overlay on floor assets, beneath HUD/Modals */
+  pointer-events: none;
+  animation: ambient-breathing-orange 2.5s ease-in-out infinite;
+}
+
+@keyframes server-rack-warning-glow {
+  0%, 100% {
+    box-shadow: 
+      0 0 15px rgba(249, 115, 22, 0.6),
+      inset 0 0 6px rgba(249, 115, 22, 0.7),
+      0 6px 12px rgba(0, 0, 0, 0.5);
+  }
+  50% {
+    box-shadow: 
+      0 0 35px rgba(249, 115, 22, 1.0),
+      inset 0 0 12px rgba(249, 115, 22, 0.9),
+      0 6px 12px rgba(0, 0, 0, 0.5);
+  }
+}
+
+.pixel-server-rack-breaker-trip {
+  animation: server-rack-warning-glow 1s ease-in-out infinite !important;
+}
+
 @keyframes console-shake {
   0%, 100% { transform: translate(0, 0); }
   10%, 30%, 50%, 70%, 90% { transform: translate(-4px, -2px); }

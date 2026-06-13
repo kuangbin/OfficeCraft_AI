@@ -393,14 +393,26 @@ export default function SpaceBoard() {
     if (activeOverlay !== 'recovery') {
       setCpuHistory([]);
       setCurrentCpu(100);
-      setTerminalOutput([
-        'SYSTEM BOOT SECTOR: STATUS OK',
-        'MAIN DATA ACCESS LAYER: OFFLINE (SERVER CONGESTION)',
-        'CPU LOAD STATUS: 100% UNSTABLE',
-        'ANALYSIS: Database index missing or connections blocking socket queue.',
-        'INSTRUCTIONS: Please write a CREATE INDEX script to resolve order latency,',
-        'or construct a Python Exception rollback block to recover core engine transactions.'
-      ]);
+      if (activeAnomaly?.anomaly_id === 'service_breaker_trip') {
+        setTerminalOutput([
+          'SYSTEM BOOT SECTOR: STATUS OK',
+          'DISTRIBUTED BUS ROUTER: HEARTBEAT EXPIRED',
+          'MICROSERVICE B STATUS: TRIPPED (CIRCUIT BREAKER OPEN)',
+          'CPU LOAD STATUS: 100% TIMEOUT BLOCK',
+          'ANALYSIS: Downstream service B is timing out, flooding upstream request queue.',
+          'INSTRUCTIONS: Please configure @circuitbreaker decorator with custom fallback function,',
+          'defining circuit-breaker states (open, closed) to prevent cascading failures!'
+        ]);
+      } else {
+        setTerminalOutput([
+          'SYSTEM BOOT SECTOR: STATUS OK',
+          'MAIN DATA ACCESS LAYER: OFFLINE (SERVER CONGESTION)',
+          'CPU LOAD STATUS: 100% UNSTABLE',
+          'ANALYSIS: Database index missing or connections blocking socket queue.',
+          'INSTRUCTIONS: Please write a CREATE INDEX script to resolve order latency,',
+          'or construct a Python Exception rollback block to recover core engine transactions.'
+        ]);
+      }
       return;
     }
 
@@ -1473,7 +1485,9 @@ export default function SpaceBoard() {
             <div
               onClick={() => activeAnomaly ? openOverlay('recovery') : openOverlay('skills')}
               className={`absolute top-0 left-0 w-[32px] h-[32px] hover:scale-105 active:scale-95 transition-all duration-100 flex flex-col items-center justify-between p-[2px] cursor-pointer z-20 group ${
-                activeAnomaly ? 'pixel-server-rack-anomaly' : 'pixel-server-rack'
+                activeAnomaly 
+                  ? (activeAnomaly.anomaly_id === 'service_breaker_trip' ? 'pixel-server-rack-breaker-trip' : 'pixel-server-rack-anomaly')
+                  : 'pixel-server-rack'
               }`}
               style={{ transform: `translate3d(${SKILL_TERMINAL.coords.x * 32}px, ${SKILL_TERMINAL.coords.y * 32}px, 0)` }}
             >
@@ -1481,12 +1495,19 @@ export default function SpaceBoard() {
               {isNearSkillTerminal && (
                 <div className="absolute bottom-8 flex flex-col items-center animate-bounce z-30">
                   <div className={`bg-slate-900/95 border-2 text-[9px] font-bold font-mono py-1 px-1.5 rounded whitespace-nowrap shadow-md ${
-                    activeAnomaly ? 'border-red-500 text-red-300' : 'border-cyan-500 text-cyan-300'
+                    activeAnomaly 
+                      ? (activeAnomaly.anomaly_id === 'service_breaker_trip' ? 'border-orange-500 text-orange-300' : 'border-red-500 text-red-300')
+                      : 'border-cyan-500 text-cyan-300'
                   }`}>
-                    {activeAnomaly ? '[Space] 故障抢修！' : '[Space] 技能星图'}
+                    {activeAnomaly 
+                      ? (activeAnomaly.anomaly_id === 'service_breaker_trip' ? '[Space] 熔断修复！' : '[Space] 故障抢修！')
+                      : '[Space] 技能星图'
+                    }
                   </div>
                   <div className={`w-1.5 h-1.5 rotate-45 -mt-1 border-r border-b ${
-                    activeAnomaly ? 'bg-red-500 border-red-500 animate-pulse' : 'bg-cyan-500 border-cyan-500'
+                    activeAnomaly 
+                      ? (activeAnomaly.anomaly_id === 'service_breaker_trip' ? 'bg-orange-500 border-orange-500' : 'bg-red-500 border-red-500 animate-pulse')
+                      : 'bg-cyan-500 border-cyan-500'
                   }`} />
                 </div>
               )}
@@ -1691,6 +1712,7 @@ export default function SpaceBoard() {
               style={{
                 background: `radial-gradient(circle 180px at ${playerCoords.x * 32 + 16}px ${playerCoords.y * 32 + 16}px, ${
                   ambientTheme === 'quiet-blue' ? 'rgba(186, 230, 253, 0.25) 0%, rgba(30, 41, 59, 0.65) 60%, rgba(15, 23, 42, 0.92) 100%' :
+                  ambientTheme === 'alert-orange' ? 'rgba(254, 215, 170, 0.22) 0%, rgba(249, 115, 22, 0.65) 50%, rgba(15, 23, 42, 0.95) 100%' :
                   ambientTheme === 'alert-red' ? 'rgba(254, 202, 202, 0.2) 0%, rgba(127, 29, 29, 0.7) 50%, rgba(15, 23, 42, 0.95) 100%' :
                   ambientTheme === 'celebrate-gold' ? 'rgba(254, 243, 199, 0.3) 0%, rgba(120, 53, 4, 0.6) 60%, rgba(15, 23, 42, 0.9) 100%' :
                   'rgba(255, 255, 240, 0.15) 0%, rgba(30, 41, 59, 0.5) 65%, rgba(15, 23, 42, 0.88) 100%'
@@ -1700,7 +1722,11 @@ export default function SpaceBoard() {
 
             {/* Ambient Overlays (Prompt-to-Light) */}
             {activeAnomaly && (
-              <div className="ambient-theme-alert-red" />
+              activeAnomaly.anomaly_id === 'service_breaker_trip' ? (
+                <div className="ambient-theme-alert-orange" />
+              ) : (
+                <div className="ambient-theme-alert-red" />
+              )
             )}
             {ambientTheme === 'quiet-blue' && (
               <div className="absolute inset-0 bg-blue-950/15 mix-blend-color-dodge backdrop-brightness-95 pointer-events-none z-10 animate-pulse border-8 border-cyan-950/40" />
@@ -1709,6 +1735,13 @@ export default function SpaceBoard() {
               <div className="absolute inset-0 bg-red-950/20 mix-blend-color-burn pointer-events-none z-10 border-8 border-red-900/40 shadow-[inset_0_0_50px_rgba(239,68,68,0.25)] animate-pulse">
                 <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-red-950 border-2 border-red-500 text-red-500 font-mono text-[9px] py-1 px-3 rounded flex items-center gap-1.5 font-bold animate-bounce">
                   <span>⚠️ COMPILATION UNIT TESTS DISRUPTED</span>
+                </div>
+              </div>
+            )}
+            {ambientTheme === 'alert-orange' && (
+              <div className="absolute inset-0 bg-orange-950/20 mix-blend-color-burn pointer-events-none z-10 border-8 border-orange-900/40 shadow-[inset_0_0_50px_rgba(249,115,22,0.25)] animate-pulse">
+                <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-orange-950 border-2 border-orange-500 text-orange-500 font-mono text-[9px] py-1 px-3 rounded flex items-center gap-1.5 font-bold animate-bounce">
+                  <span>⚠️ CORE MICROSERVICE OUTAGE DETECTED</span>
                 </div>
               </div>
             )}
@@ -2129,195 +2162,306 @@ export default function SpaceBoard() {
         </div>
       )}
 
-      {/* 7. SERVER RECOVERY CONSOLE OVERLAY (Phase 13) */}
-      {activeOverlay === 'recovery' && (
-        <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md flex items-center justify-center z-50 p-4 font-mono select-none animate-fade-in pointer-events-auto animate-fade-in">
-          <div className={`w-full max-w-4xl h-[85vh] bg-slate-950/90 border-4 border-red-500 shadow-[0_0_40px_rgba(239,68,68,0.4)] p-6 relative flex flex-col gap-4 rounded-xl ${
-            isConsoleShaking ? 'console-screen-shake' : ''
-          }`}>
-            {/* Header */}
-            <div className="border-b-2 border-red-950 pb-3 flex justify-between items-center">
-              <div className="flex items-center gap-3">
-                <span className="text-2xl animate-pulse">🚨</span>
-                <div>
-                  <span className="text-[9px] font-bold text-red-500 tracking-wider uppercase">CORE SYSTEM FAILURE SECTOR DECK</span>
-                  <h3 className="pixel-title text-base font-bold text-slate-100">机房数据库核心重构终端 (Server Recovery Terminal)</h3>
-                </div>
-              </div>
-              <button 
-                onClick={closeOverlay} 
-                className="text-slate-400 hover:text-red-400 border border-slate-800 bg-slate-950 hover:border-red-500/50 px-3 py-1 text-xs transition-colors duration-200 rounded"
-              >
-                [关闭 Esc]
-              </button>
-            </div>
-
-            {/* Main console content */}
-            <div className="flex-1 flex flex-col md:flex-row gap-4 min-h-0">
-              {/* Left Column: Stats & Logs */}
-              <div className="w-full md:w-[320px] flex flex-col gap-4">
-                {/* CPU load display card */}
-                <div className="bg-slate-950/70 border border-red-900/50 rounded-lg p-4 flex flex-col gap-3">
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs font-bold text-red-400">🔥 核心数据库 CPU 负载</span>
-                    <span className={`text-xs font-mono font-bold px-1.5 py-0.5 rounded ${
-                      currentCpu > 90 ? 'bg-red-950/60 text-red-500 animate-pulse' : 'bg-emerald-950/60 text-emerald-400'
+      {/* 7. SERVER RECOVERY CONSOLE OVERLAY (Phase 13 / Upgraded Phase 15) */}
+      {activeOverlay === 'recovery' && (() => {
+        const isBreakerTrip = activeAnomaly?.anomaly_id === 'service_breaker_trip' || terminalOutput.some(log => log.includes('Microservice B') || log.includes('熔断器'));
+        return (
+          <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md flex items-center justify-center z-50 p-4 font-mono select-none animate-fade-in pointer-events-auto">
+            <div className={`w-full max-w-4xl h-[85vh] bg-slate-950/90 border-4 relative flex flex-col gap-4 rounded-xl ${
+              isConsoleShaking ? 'console-screen-shake' : ''
+            } ${
+              isBreakerTrip 
+                ? 'border-orange-500 shadow-[0_0_40px_rgba(249,115,22,0.45)]' 
+                : 'border-red-500 shadow-[0_0_40px_rgba(239,68,68,0.4)]'
+            }`}>
+              {/* Header */}
+              <div className={`border-b-2 pb-3 flex justify-between items-center ${
+                isBreakerTrip ? 'border-orange-950' : 'border-red-950'
+              }`}>
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl animate-pulse">
+                    {isBreakerTrip ? '⚡' : '🚨'}
+                  </span>
+                  <div>
+                    <span className={`text-[9px] font-bold tracking-wider uppercase ${
+                      isBreakerTrip ? 'text-orange-500' : 'text-red-500'
                     }`}>
-                      {currentCpu > 90 ? 'SEVERE OVERLOAD' : 'NOMINAL'}
+                      {isBreakerTrip ? 'DISTRIBUTED CIRCUIT BREAKER SECTOR DECK' : 'CORE SYSTEM FAILURE SECTOR DECK'}
                     </span>
-                  </div>
-
-                  <div className="flex items-baseline gap-1">
-                    <span className={`text-4xl font-bold font-mono tracking-tighter ${
-                      currentCpu > 90 ? 'text-red-500' : 'text-emerald-400'
-                    }`}>
-                      {currentCpu.toFixed(1)}
-                    </span>
-                    <span className="text-sm text-slate-500">%</span>
-                  </div>
-
-                  {/* SVG Jittery Line Graph */}
-                  <div className="h-[60px] w-full bg-slate-950/80 border border-slate-900 rounded p-1 overflow-hidden relative">
-                    <div className="absolute inset-0 bg-scanlines opacity-10 pointer-events-none" />
-                    {cpuHistory.length > 1 ? (
-                      <svg className="w-full h-full" viewBox="0 0 240 60" preserveAspectRatio="none">
-                        <polyline
-                          fill="none"
-                          stroke={currentCpu > 90 ? '#ef4444' : '#10b981'}
-                          strokeWidth="2"
-                          points={cpuHistory.map((val, idx) => {
-                            const x = (idx / Math.max(1, cpuHistory.length - 1)) * 240;
-                            const y = 55 - (val / 100) * 50;
-                            return `${x},${y}`;
-                          }).join(' ')}
-                        />
-                      </svg>
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-600">
-                        正在初始化波形...
-                      </div>
-                    )}
+                    <h3 className="pixel-title text-base font-bold text-slate-100">
+                      {isBreakerTrip 
+                        ? '机房分布式熔断应急抢修终端 (Circuit Breaker Recovery Terminal)' 
+                        : '机房数据库核心重构终端 (Server Recovery Terminal)'}
+                    </h3>
                   </div>
                 </div>
-
-                {/* Problems and Diagnostic logs */}
-                <div className="flex-1 bg-slate-950/70 border border-slate-900 rounded-lg p-4 flex flex-col gap-2 overflow-hidden">
-                  <span className="text-[10px] font-bold text-slate-500 tracking-wider">📋 诊断输出 (LOGS)</span>
-                  <div className="flex-1 overflow-y-auto scrollbar-thin flex flex-col gap-1.5 text-[10.5px] font-mono leading-relaxed text-slate-400 animate-pulse">
-                    {terminalOutput.map((log, idx) => {
-                      let color = 'text-slate-400';
-                      if (log.includes('WARNING') || log.includes('UNSTABLE')) color = 'text-red-400 font-bold';
-                      else if (log.includes('SUCCESS') || log.includes('OK') || log.includes('RESTORED')) color = 'text-emerald-400';
-                      else if (log.includes('INSTRUCTIONS') || log.includes('RAG')) color = 'text-cyan-400';
-                      
-                      return (
-                        <div key={idx} className={`${color} break-all`}>
-                          &gt; {log}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
+                <button 
+                  onClick={closeOverlay} 
+                  className={`text-slate-400 hover:text-slate-200 border border-slate-800 bg-slate-950 px-3 py-1 text-xs transition-colors duration-200 rounded ${
+                    isBreakerTrip ? 'hover:border-orange-500/50 hover:text-orange-400' : 'hover:border-red-500/50 hover:text-red-400'
+                  }`}
+                >
+                  [关闭 Esc]
+                </button>
               </div>
 
-              {/* Right Column: Editor & Sandbox Submit */}
-              <div className="flex-1 flex flex-col gap-3">
-                <div className="flex-1 flex flex-col bg-slate-950/85 border border-slate-900 rounded-lg overflow-hidden relative">
-                  {/* Editor Header */}
-                  <div className="bg-slate-950/90 border-b border-slate-900 px-4 py-2 flex justify-between items-center text-xs">
-                    <span className="text-slate-400 font-bold">🛠️ 紧急安全重构编辑器 (sql_python_sandbox)</span>
-                    <span className="text-[9px] text-slate-600 uppercase font-mono font-bold">UTF-8 / Case-Insensitive</span>
-                  </div>
-
-                  {/* Textarea with retro line numbers design */}
-                  <div className="flex-1 flex relative font-mono text-[12px] bg-slate-950">
-                    {/* Line numbers dummy sidebar */}
-                    <div className="w-10 bg-slate-950/60 border-r border-slate-900/60 text-slate-700 text-right pr-2 py-3 select-none flex flex-col gap-[3px]">
-                      {Array.from({ length: 12 }).map((_, i) => (
-                        <span key={i}>{i + 1}</span>
-                      ))}
+              {/* Main console content */}
+              <div className="flex-1 flex flex-col md:flex-row gap-4 min-h-0">
+                {/* Left Column: Stats & Logs */}
+                <div className="w-full md:w-[320px] flex flex-col gap-4 overflow-y-auto pr-1">
+                  {/* CPU load display card */}
+                  <div className={`bg-slate-950/70 border rounded-lg p-4 flex flex-col gap-3 ${
+                    isBreakerTrip ? 'border-orange-900/50' : 'border-red-900/50'
+                  }`}>
+                    <div className="flex justify-between items-center">
+                      <span className={`text-xs font-bold ${isBreakerTrip ? 'text-orange-400' : 'text-red-400'}`}>
+                        {isBreakerTrip ? '⚡ 分布式熔断延迟/心跳状态' : '🔥 核心数据库 CPU 负载'}
+                      </span>
+                      <span className={`text-xs font-mono font-bold px-1.5 py-0.5 rounded ${
+                        currentCpu > 90 
+                          ? isBreakerTrip 
+                            ? 'bg-orange-950/60 text-orange-500 animate-pulse' 
+                            : 'bg-red-950/60 text-red-500 animate-pulse'
+                          : 'bg-emerald-950/60 text-emerald-400'
+                      }`}>
+                        {currentCpu > 90 ? (isBreakerTrip ? 'CIRCUIT OPEN' : 'SEVERE OVERLOAD') : 'NOMINAL'}
+                      </span>
                     </div>
 
-                    {/* Actual textarea input */}
-                    <textarea
-                      value={recoveryScript}
-                      onChange={(e) => setRecoveryScript(e.target.value)}
-                      placeholder={
-                        `-- 示例 1: 创建缺失索引以解决 CPU 过载\n-- CREATE INDEX idx_user ON orders(user_id);\n\n# 示例 2: 使用 try-except 与 rollback 机制防止连接超时死锁\ntry:\n    db.commit()\nexcept Exception as e:\n    db.rollback()\n    raise e`
-                      }
-                      className="flex-1 h-full bg-transparent text-slate-200 p-3 outline-none resize-none focus:ring-0 placeholder-slate-700 leading-[1.3] overflow-y-auto"
-                      style={{ caretColor: '#ef4444' }}
-                    />
+                    <div className="flex items-baseline gap-1">
+                      <span className={`text-4xl font-bold font-mono tracking-tighter ${
+                        currentCpu > 90 ? (isBreakerTrip ? 'text-orange-500' : 'text-red-500') : 'text-emerald-400'
+                      }`}>
+                        {currentCpu.toFixed(1)}
+                      </span>
+                      <span className="text-sm text-slate-500">%</span>
+                    </div>
+
+                    {/* SVG Jittery Line Graph */}
+                    <div className="h-[60px] w-full bg-slate-950/80 border border-slate-900 rounded p-1 overflow-hidden relative">
+                      <div className="absolute inset-0 bg-scanlines opacity-10 pointer-events-none" />
+                      {cpuHistory.length > 1 ? (
+                        <svg className="w-full h-full" viewBox="0 0 240 60" preserveAspectRatio="none">
+                          <polyline
+                            fill="none"
+                            stroke={currentCpu > 90 ? (isBreakerTrip ? '#f97316' : '#ef4444') : '#10b981'}
+                            strokeWidth="2"
+                            points={cpuHistory.map((val, idx) => {
+                              const x = (idx / Math.max(1, cpuHistory.length - 1)) * 240;
+                              const y = 55 - (val / 100) * 50;
+                              return `${x},${y}`;
+                            }).join(' ')}
+                          />
+                        </svg>
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-600">
+                          正在初始化波形...
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Breaker Switch Diagram (Blown Red Switch / Restored Green Switch) */}
+                  {isBreakerTrip && (
+                    <div className="bg-slate-950/70 border border-orange-500/30 rounded-lg p-3 flex flex-col gap-2 relative overflow-hidden">
+                      <div className="absolute inset-0 bg-scanlines opacity-5 pointer-events-none" />
+                      <span className="text-[10px] font-bold text-orange-400 tracking-wider">⚡ 熔断断路器脱扣监测 (Circuit Breaker)</span>
+                      <div className="flex items-center justify-between bg-slate-950/50 p-2 border border-slate-900 rounded">
+                        <div className="flex flex-col">
+                          <span className="text-xs font-bold text-slate-300">微服务 B 保护链</span>
+                          <span className="text-[9px] text-slate-500 font-mono">ID: breaker_ms_b_trip</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className={`relative w-14 h-8 rounded-full p-1 transition-colors duration-300 ${
+                            activeAnomaly ? 'bg-red-950 border border-red-500/50' : 'bg-emerald-950 border border-emerald-500/50'
+                          }`}>
+                            <div className={`absolute top-1 w-6 h-5 rounded-md flex items-center justify-center font-bold text-[8px] tracking-tighter shadow-md transition-all duration-300 ${
+                              activeAnomaly 
+                                ? 'left-1 bg-red-600 text-slate-100 shadow-[0_0_8px_#ef4444]' 
+                                : 'left-7 bg-emerald-500 text-slate-950 shadow-[0_0_8px_#10b981]'
+                            }`}>
+                              {activeAnomaly ? 'TRIP' : 'ON'}
+                            </div>
+                          </div>
+                          <span className={`text-[10px] font-bold font-mono ${activeAnomaly ? 'text-red-500 animate-pulse' : 'text-emerald-400'}`}>
+                            {activeAnomaly ? 'OPEN' : 'CLOSED'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Switch Lever Visual Representation */}
+                      <div className="flex justify-center p-2 border border-slate-900 bg-slate-950/40 rounded">
+                        <svg width="180" height="40" viewBox="0 0 180 40" className="overflow-visible">
+                          <circle cx="20" cy="20" r="4" fill={activeAnomaly ? "#ef4444" : "#10b981"} className={activeAnomaly ? "animate-pulse" : ""} />
+                          <circle cx="160" cy="20" r="4" fill={activeAnomaly ? "#ef4444" : "#10b981"} className={activeAnomaly ? "animate-pulse" : ""} />
+                          <text x="20" y="12" fill="#64748b" fontSize="8" textAnchor="middle" fontFamily="monospace">IN</text>
+                          <text x="160" y="12" fill="#64748b" fontSize="8" textAnchor="middle" fontFamily="monospace">OUT</text>
+                          <line x1="20" y1="20" x2="60" y2="20" stroke="#475569" strokeWidth="2" />
+                          <line x1="120" y1="20" x2="160" y2="20" stroke="#475569" strokeWidth="2" />
+                          {activeAnomaly ? (
+                            <>
+                              <path d="M 60 20 L 100 0" stroke="#ef4444" strokeWidth="3" strokeLinecap="round" />
+                              <path d="M 90 8 L 98 14 M 85 5 L 90 10" stroke="#f97316" strokeWidth="1.5" strokeLinecap="round" className="animate-bounce" />
+                              <text x="100" y="32" fill="#ef4444" fontSize="9" textAnchor="middle" fontFamily="monospace" fontWeight="bold" className="animate-pulse">DISCONNECTED</text>
+                            </>
+                          ) : (
+                            <>
+                              <line x1="60" y1="20" x2="120" y2="20" stroke="#10b981" strokeWidth="3" strokeLinecap="round" />
+                              <text x="90" y="32" fill="#10b981" fontSize="9" textAnchor="middle" fontFamily="monospace" fontWeight="bold">CLOSED (SECURE)</text>
+                            </>
+                          )}
+                        </svg>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Problems and Diagnostic logs */}
+                  <div className="flex-1 bg-slate-950/70 border border-slate-900 rounded-lg p-4 flex flex-col gap-2 overflow-hidden min-h-[140px]">
+                    <span className="text-[10px] font-bold text-slate-500 tracking-wider">📋 诊断输出 (LOGS)</span>
+                    <div className="flex-1 overflow-y-auto scrollbar-thin flex flex-col gap-1.5 text-[10.5px] font-mono leading-relaxed text-slate-400 animate-pulse">
+                      {terminalOutput.map((log, idx) => {
+                        let color = 'text-slate-400';
+                        if (log.includes('WARNING') || log.includes('UNSTABLE') || log.includes('TRIPPED') || log.includes('EXPIRED')) {
+                          color = isBreakerTrip ? 'text-orange-400 font-bold' : 'text-red-400 font-bold';
+                        } else if (log.includes('SUCCESS') || log.includes('OK') || log.includes('RESTORED') || log.includes('CLOSED')) {
+                          color = 'text-emerald-400';
+                        } else if (log.includes('INSTRUCTIONS') || log.includes('RAG') || log.includes('EVALUATION')) {
+                          color = 'text-cyan-400';
+                        }
+                        
+                        return (
+                          <div key={idx} className={`${color} break-all`}>
+                            &gt; {log}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
 
-                {/* Footer Controls */}
-                <div className="flex justify-between items-center gap-4 bg-slate-900/20 p-3 border border-slate-900 rounded-lg">
-                  <div className="text-[10px] text-slate-500 leading-snug">
-                    <p>💡 <span className="text-cyan-400">RAG 书架提示</span>: 检索 \`software_design_rules\` 书架以学习异常重试与数据事务规范。</p>
-                    <p className="mt-0.5">💡 SQL 重写或 Python 异常回滚可以令 CPU 降至 <span className="text-emerald-400 font-bold">12%</span> 稳态，并获得 <span className="text-amber-400 font-bold">+50 XP</span>！</p>
+                {/* Right Column: Editor & Sandbox Submit */}
+                <div className="flex-1 flex flex-col gap-3 min-h-0">
+                  <div className="flex-1 flex flex-col bg-slate-950/85 border border-slate-900 rounded-lg overflow-hidden relative min-h-0">
+                    {/* Editor Header */}
+                    <div className={`bg-slate-950/90 border-b border-slate-900 px-4 py-2 flex justify-between items-center text-xs ${
+                      isBreakerTrip ? 'text-orange-400' : 'text-slate-400'
+                    }`}>
+                      <span className="font-bold">
+                        {isBreakerTrip 
+                          ? '🛠️ 异常熔断中间件重构编辑器 (py_breaker_sandbox)' 
+                          : '🛠️ 紧急安全重构编辑器 (sql_python_sandbox)'}
+                      </span>
+                      <span className="text-[9px] text-slate-600 uppercase font-mono font-bold">UTF-8 / Case-Insensitive</span>
+                    </div>
+
+                    {/* Textarea with retro line numbers design */}
+                    <div className="flex-1 flex relative font-mono text-[12px] bg-slate-950 min-h-0">
+                      {/* Line numbers dummy sidebar */}
+                      <div className="w-10 bg-slate-950/60 border-r border-slate-900/60 text-slate-700 text-right pr-2 py-3 select-none flex flex-col gap-[3px]">
+                        {Array.from({ length: 15 }).map((_, i) => (
+                          <span key={i}>{i + 1}</span>
+                        ))}
+                      </div>
+
+                      {/* Actual textarea input */}
+                      <textarea
+                        value={recoveryScript}
+                        onChange={(e) => setRecoveryScript(e.target.value)}
+                        placeholder={
+                          isBreakerTrip
+                            ? `# Python 示例: 编写分布式熔断降级中间件\n@circuitbreaker(timeout=3, fallback=handle_timeout_fallback)\ndef request_ms_b_service(payload):\n    # 当微服务 B 心跳状态 open 时触发熔断，切回 closed 自愈机制\n    if service_b.is_open():\n        raise Exception("Circuit Breaker is Open")\n    return service_b.call(payload)\n\ndef handle_timeout_fallback(payload):\n    return {"status": "fallback_offline", "data": "Using local fallback backup"}`
+                            : `-- 示例 1: 创建缺失索引以解决 CPU 过载\n-- CREATE INDEX idx_user ON orders(user_id);\n\n# 示例 2: 使用 try-except 与 rollback 机制防止连接超时死锁\ntry:\n    db.commit()\nexcept Exception as e:\n    db.rollback()\n    raise e`
+                        }
+                        className="flex-1 h-full bg-transparent text-slate-200 p-3 outline-none resize-none focus:ring-0 placeholder-slate-700 leading-[1.3] overflow-y-auto"
+                        style={{ caretColor: isBreakerTrip ? '#f97316' : '#ef4444' }}
+                      />
+                    </div>
                   </div>
 
-                  <button
-                    onClick={async () => {
-                      if (isRecoveryCompiling || !recoveryScript.trim()) return;
-                      setIsRecoveryCompiling(true);
-                      setTerminalOutput(prev => [...prev, '>>> EVALUATION PIPELINE RUNNING...', '>>> RUNNING SYNTAX & SEMANTIC STATIC CHECKS...']);
-                      audioManager.playTypewriter();
+                  {/* Footer Controls */}
+                  <div className="flex justify-between items-center gap-4 bg-slate-900/20 p-3 border border-slate-900 rounded-lg shrink-0">
+                    <div className="text-[10px] text-slate-500 leading-snug flex-1">
+                      {isBreakerTrip ? (
+                        <>
+                          <p>💡 <span className="text-orange-400">RAG 书架提示</span>: 检索 \`software_design_rules\` 书架，学习优雅降级与 CircuitBreaker 的状态转换。</p>
+                          <p className="mt-0.5">💡 包含 <span className="text-orange-400 font-bold">circuitbreaker/breaker</span>, <span className="text-orange-400 font-bold">fallback</span>, <span className="text-orange-400 font-bold">open</span> 和 <span className="text-orange-400 font-bold">closed</span> 关键字即可闭合保护链路，获得 <span className="text-amber-400 font-bold">+80 XP</span>！</p>
+                        </>
+                      ) : (
+                        <>
+                          <p>💡 <span className="text-cyan-400">RAG 书架提示</span>: 检索 \`software_design_rules\` 书架以学习异常重试与数据事务规范。</p>
+                          <p className="mt-0.5">💡 SQL 重写或 Python 异常回滚可以令 CPU 降至 <span className="text-emerald-400 font-bold">12%</span> 稳态，并获得 <span className="text-amber-400 font-bold">+50 XP</span>！</p>
+                        </>
+                      )}
+                    </div>
 
-                      try {
-                        const response = await resolveAnomaly(recoveryScript);
-                        // Synthesize compilation typewriter sounds
-                        setTimeout(() => {
-                          if (response.status === 'success') {
-                            setTerminalOutput(prev => [
-                              ...prev,
-                              '>>> COMPILER RESULT: SUCCESS',
-                              `>>> FEEDBACK: ${response.feedback}`,
-                              '>>> DB ENGINE RESTORED TO NOMINAL STATE.',
-                              '>>> EXCELLENT RECOVERY WORK! +50 XP AWARDED.'
-                            ]);
-                            setIsRecoveryCompiling(false);
-                          } else {
-                            setTerminalOutput(prev => [
-                              ...prev,
-                              '>>> COMPILER WARNING: FAILED STATIC CHECKS',
-                              `>>> ERROR LOG: ${response.feedback}`,
-                              '>>> REMEDY WORK NEEDED.'
-                            ]);
-                            setIsConsoleShaking(true);
-                            audioManager.playClose(); // alert warning sound
-                            setTimeout(() => setIsConsoleShaking(false), 500);
-                            setIsRecoveryCompiling(false);
-                          }
-                        }, 1200);
-                      } catch (err) {
-                        setTerminalOutput(prev => [...prev, '>>> CONNECTION ERROR: UNABLE TO CONTACT SERVER COMPILER NODE.']);
-                        setIsRecoveryCompiling(false);
-                      }
-                    }}
-                    disabled={isRecoveryCompiling || !recoveryScript.trim()}
-                    className={`px-5 py-2.5 font-bold rounded-lg border transition-all duration-200 select-none text-xs flex items-center gap-2 ${
-                      isRecoveryCompiling || !recoveryScript.trim()
-                        ? 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed'
-                        : 'bg-red-950/60 hover:bg-red-900/60 border-red-500/80 hover:border-red-400 text-red-200 active:scale-95'
-                    }`}
-                  >
-                    {isRecoveryCompiling ? (
-                      <>
-                        <span className="w-3 h-3 border-2 border-red-500 border-t-transparent rounded-full animate-spin" />
-                        诊断检查中...
-                      </>
-                    ) : (
-                      <>⚡ 运行重构检查</>
-                    )}
-                  </button>
+                    <button
+                      onClick={async () => {
+                        if (isRecoveryCompiling || !recoveryScript.trim()) return;
+                        setIsRecoveryCompiling(true);
+                        setTerminalOutput(prev => [...prev, '>>> EVALUATION PIPELINE RUNNING...', '>>> RUNNING SYNTAX & SEMANTIC STATIC CHECKS...']);
+                        audioManager.playTypewriter();
+
+                        try {
+                          const response = await resolveAnomaly(recoveryScript);
+                          // Synthesize compilation typewriter sounds
+                          setTimeout(() => {
+                            if (response.status === 'success') {
+                              const xpGained = response.xp_gained || (isBreakerTrip ? 80 : 50);
+                              setTerminalOutput(prev => [
+                                ...prev,
+                                '>>> COMPILER RESULT: SUCCESS',
+                                `>>> FEEDBACK: ${response.feedback}`,
+                                isBreakerTrip
+                                  ? '>>> MICROSERVICE B BUS PATH RE-CLOSED (ON).'
+                                  : '>>> DB ENGINE RESTORED TO NOMINAL STATE.',
+                                `>>> EXCELLENT RECOVERY WORK! +${xpGained} XP AWARDED.`
+                              ]);
+                              setIsRecoveryCompiling(false);
+                            } else {
+                              setTerminalOutput(prev => [
+                                ...prev,
+                                '>>> COMPILER WARNING: FAILED STATIC CHECKS',
+                                `>>> ERROR LOG: ${response.feedback}`,
+                                '>>> REMEDY WORK NEEDED.'
+                              ]);
+                              setIsConsoleShaking(true);
+                              audioManager.playClose(); // alert warning sound
+                              setTimeout(() => setIsConsoleShaking(false), 500);
+                              setIsRecoveryCompiling(false);
+                            }
+                          }, 1200);
+                        } catch (err) {
+                          setTerminalOutput(prev => [...prev, '>>> CONNECTION ERROR: UNABLE TO CONTACT SERVER COMPILER NODE.']);
+                          setIsRecoveryCompiling(false);
+                        }
+                      }}
+                      disabled={isRecoveryCompiling || !recoveryScript.trim()}
+                      className={`px-5 py-2.5 font-bold rounded-lg border transition-all duration-200 select-none text-xs flex items-center gap-2 shrink-0 ${
+                        isRecoveryCompiling || !recoveryScript.trim()
+                          ? 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed'
+                          : isBreakerTrip
+                            ? 'bg-orange-950/60 hover:bg-orange-900/60 border-orange-500/80 hover:border-orange-400 text-orange-200 active:scale-95'
+                            : 'bg-red-950/60 hover:bg-red-900/60 border-red-500/80 hover:border-red-400 text-red-200 active:scale-95'
+                      }`}
+                    >
+                      {isRecoveryCompiling ? (
+                        <>
+                          <span className={`w-3 h-3 border-2 border-t-transparent rounded-full animate-spin ${
+                            isBreakerTrip ? 'border-orange-500' : 'border-red-500'
+                          }`} />
+                          诊断检查中...
+                        </>
+                      ) : (
+                        <>⚡ 运行重构检查</>
+                      )}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ================== CLASSIC RPG DIALOGUE BOX OVERLAYS ================== */}
 
@@ -2707,18 +2851,44 @@ export default function SpaceBoard() {
                       </div>
                     </div>
 
-                    <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-2 opacity-75">
+                    <div className={`bg-slate-900/80 border ${activeAnomaly?.anomaly_id === 'service_breaker_trip' ? 'border-orange-500/80 shadow-[0_0_12px_rgba(249,115,22,0.15)]' : 'border-slate-800 hover:border-violet-500/60'} rounded-lg p-3 space-y-2 transition-all`}>
                       <div className="flex justify-between items-center">
-                        <span className="text-[9px] font-bold text-blue-400 bg-blue-950/50 border border-blue-900/60 px-1.5 py-0.5 rounded">P1 架构重构</span>
-                        <span className="text-[9px] text-slate-500">● 准备中</span>
+                        <span className="text-[9px] font-bold text-orange-400 bg-orange-950/50 border border-orange-900/60 px-1.5 py-0.5 rounded">P1 架构重构</span>
+                        {activeAnomaly?.anomaly_id === 'service_breaker_trip' ? (
+                          <span className="text-[9px] text-orange-400 animate-pulse font-bold">● 战役已激活</span>
+                        ) : (
+                          <span className="text-[9px] text-emerald-400 font-bold">● 可接取</span>
+                        )}
                       </div>
-                      <h4 className="text-xs font-bold text-slate-300">分布式熔断器改造</h4>
-                      <p className="text-[10px] text-slate-500 leading-relaxed">
+                      <h4 className="text-xs font-bold text-slate-100">分布式熔断器改造</h4>
+                      <p className="text-[10px] text-slate-300 leading-relaxed">
                         当单点节点心跳超时，协同编写异常熔断并自愈的熔断降级中间件，提升核心服务稳定性。
                       </p>
-                      <div className="flex justify-between text-[9px] text-slate-500">
-                        <span>前置条件: Phase 15 解锁</span>
-                        <span>奖励: 200 XP</span>
+
+                      {activeAnomaly?.anomaly_id === 'service_breaker_trip' ? (
+                        <div className="bg-orange-950/40 border border-orange-500/30 p-2 rounded text-[10px] text-orange-300 leading-normal">
+                          ⚠️ 紧急事故：微服务 B 心跳超时已触发分布式脱扣熔断！请前往 Archive Room (18, 15) 进行应急抢修。
+                        </div>
+                      ) : (
+                        <button
+                          onClick={async () => {
+                            try {
+                              await triggerAnomaly('service_breaker_trip');
+                              alert('⚠️ 战役已激活：微服务 B 心跳超时，分布式系统已触发脱扣熔断保护！请立刻前往 Archive Room (18, 15) 重组核心保护链！');
+                              closeCoopWhiteboard();
+                            } catch (e) {
+                              alert('激活战役失败，请检查网络/后台');
+                            }
+                          }}
+                          className="w-full py-1.5 bg-orange-600 hover:bg-orange-500 text-slate-950 hover:text-slate-100 text-[11px] font-bold rounded transition-colors flex items-center justify-center gap-1"
+                        >
+                          🎯 激活团队战役
+                        </button>
+                      )}
+
+                      <div className="flex justify-between text-[9px] text-slate-500 pt-1 border-t border-slate-900">
+                        <span>奖励: +80 XP (协同红利)</span>
+                        <span>难易度: ★★★★☆</span>
                       </div>
                     </div>
                   </div>

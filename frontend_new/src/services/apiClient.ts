@@ -445,9 +445,10 @@ export const api = {
     });
   },
 
-  async triggerSpaceAnomaly(signal?: AbortSignal): Promise<SpaceAnomaly> {
+  async triggerSpaceAnomaly(anomalyId?: string, signal?: AbortSignal): Promise<SpaceAnomaly> {
     return request<SpaceAnomaly>('/api/v1/space/anomaly/trigger', {
       method: 'POST',
+      body: anomalyId ? JSON.stringify({ anomaly_id: anomalyId }) : undefined,
       signal,
     });
   },
