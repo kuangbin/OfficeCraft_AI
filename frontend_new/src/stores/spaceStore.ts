@@ -3,6 +3,24 @@
 import { create } from 'zustand';
 import { api, SpaceCoords, SpaceActiveMission, SpaceConflict, SpaceStateResponse } from '@/services/apiClient';
 import { audioManager } from '@/utils/audioManager';
+import { getPlayerId } from '@/services/identity';
+
+export interface RemotePlayerState {
+  id: string;
+  x: number;
+  y: number;
+  facingDirection: 'down' | 'up' | 'left' | 'right';
+  isWalking: boolean;
+  isTyping: boolean;
+}
+
+const getWebSocketUrl = () => {
+  const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+  const wsProto = apiBaseUrl.startsWith('https') ? 'wss' : 'ws';
+  const host = apiBaseUrl.replace(/^https?:\/\//, '');
+  const playerId = getPlayerId() || '';
+  return `${wsProto}://${host}/api/v1/space/ws?player_id=${playerId}`;
+};
 
 interface SpaceStore {
   playerCoords: SpaceCoords;
@@ -16,11 +34,20 @@ interface SpaceStore {
   facingDirection: 'down' | 'up' | 'left' | 'right';
   isWalking: boolean;
 
+  // Multiplayer fields
+  remotePlayers: Record<string, RemotePlayerState>;
+  socket: WebSocket | null;
+
   // Actions
   syncFromBackend: () => Promise<void>;
   movePlayer: (dx: number, dy: number) => Promise<string | null>;
   setAmbientTheme: (theme: string) => void;
   triggerBookcaseSearch: (bookcaseId: string, query: string) => Promise<any>;
+
+  // Multiplayer actions
+  connectWebSocket: () => void;
+  disconnectWebSocket: () => void;
+  setLocalTyping: (isTyping: boolean) => void;
 }
 
 function createCollisionMatrix(): number[][] {
@@ -91,6 +118,8 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
   isLoading: false,
   facingDirection: 'down',
   isWalking: false,
+  remotePlayers: {},
+  socket: null,
 
   syncFromBackend: async () => {
     set({ isLoading: true });
@@ -159,9 +188,31 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
     });
     audioManager.playStep();
 
+    // Send MOVE update to WebSocket immediately
+    const socket = get().socket;
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({
+        type: 'MOVE',
+        x: nextX,
+        y: nextY,
+        direction: facing,
+        isWalking: true
+      }));
+    }
+
     // Reset walking state after the tile-movement transition completes (100ms duration)
     setTimeout(() => {
       set({ isWalking: false });
+      const currentSocket = get().socket;
+      if (currentSocket && currentSocket.readyState === WebSocket.OPEN) {
+        currentSocket.send(JSON.stringify({
+          type: 'MOVE',
+          x: nextX,
+          y: nextY,
+          direction: facing,
+          isWalking: false
+        }));
+      }
     }, 120);
 
     try {
@@ -188,6 +239,117 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
     } catch (error) {
       console.error(`Failed bookcase RAG search for ${bookcaseId}:`, error);
       throw error;
+    }
+  },
+
+  connectWebSocket: () => {
+    if (get().socket) return;
+    if (typeof window === 'undefined') return;
+
+    const wsUrl = getWebSocketUrl();
+    console.log('Connecting to Space WebSocket:', wsUrl);
+
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(wsUrl);
+    } catch (e) {
+      console.error('Failed to create WebSocket:', e);
+      return;
+    }
+
+    set({ socket: ws });
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        const { type } = data;
+
+        if (type === 'SYNC') {
+          set({ remotePlayers: data.players });
+        } else if (type === 'PLAYER_JOIN') {
+          const { player_id, state } = data;
+          set((prev) => ({
+            remotePlayers: {
+              ...prev.remotePlayers,
+              [player_id]: {
+                id: player_id,
+                x: state.x,
+                y: state.y,
+                facingDirection: state.direction,
+                isWalking: state.isWalking,
+                isTyping: state.isTyping,
+              },
+            },
+          }));
+        } else if (type === 'PLAYER_MOVE') {
+          const { player_id, x, y, direction, isWalking } = data;
+          set((prev) => ({
+            remotePlayers: {
+              ...prev.remotePlayers,
+              [player_id]: {
+                ...(prev.remotePlayers[player_id] || {}),
+                id: player_id,
+                x,
+                y,
+                facingDirection: direction,
+                isWalking,
+              },
+            },
+          }));
+        } else if (type === 'PLAYER_TYPING') {
+          const { player_id, isTyping } = data;
+          set((prev) => ({
+            remotePlayers: {
+              ...prev.remotePlayers,
+              [player_id]: {
+                ...(prev.remotePlayers[player_id] || {}),
+                id: player_id,
+                isTyping,
+              },
+            },
+          }));
+        } else if (type === 'PLAYER_LEAVE') {
+          const { player_id } = data;
+          set((prev) => {
+            const nextRemotes = { ...prev.remotePlayers };
+            delete nextRemotes[player_id];
+            return { remotePlayers: nextRemotes };
+          });
+        }
+      } catch (err) {
+        console.warn('Failed to parse WebSocket message:', err);
+      }
+    };
+
+    ws.onclose = () => {
+      console.log('Space WebSocket disconnected.');
+      set({ socket: null });
+      setTimeout(() => {
+        if (!get().socket) {
+          get().connectWebSocket();
+        }
+      }, 3000);
+    };
+
+    ws.onerror = (err) => {
+      console.error('Space WebSocket error:', err);
+    };
+  },
+
+  disconnectWebSocket: () => {
+    const { socket } = get();
+    if (socket) {
+      socket.onclose = null;
+      socket.close();
+      set({ socket: null, remotePlayers: {} });
+      console.log('Space WebSocket closed manually.');
+    }
+  },
+
+  setLocalTyping: (isTyping: boolean) => {
+    const { socket } = get();
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: 'TYPING', isTyping }));
     }
   },
 }));

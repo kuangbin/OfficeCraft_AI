@@ -1,10 +1,17 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { useSpaceStore } from '@/stores/spaceStore';
+import { useUserStore } from '@/stores/userStore';
+import { useMissionStore } from '@/stores/missionStore';
+import { useCommunityStore } from '@/stores/communityStore';
 import { api, streamChat, SpatialRagChunk } from '@/services/apiClient';
+import { careerService, missionService } from '@/services';
 import { PixelBadge, PixelButton, PixelCard } from '@/components/pixel';
 import { audioManager } from '@/utils/audioManager';
+import CareerWorldMap, { CareerMapIsland } from '@/components/lobby/CareerWorldMap';
+import CareerPreviewPanel from '@/components/lobby/CareerPreviewPanel';
+import { CareerIsland, Mission, MissionStatus } from '@/types';
 
 // Map area labels
 const ZONES = {
@@ -43,7 +50,7 @@ const NPC_INFO = {
     emoji: '🧠',
     color: 'text-cyan-400 border-cyan-500',
     bgColor: 'bg-cyan-950/40',
-    greeting: '我是高级分析顾问郑莹。数据是一门艺术，也是最具说服力的武器。在开始你的分析任务前，最好多去书架区检索一些 Pandas 指南和分析规范。有任何疑惑随时来问我。',
+    greeting: '我是高级分析顾问郑莹。数据是一门艺术，也是最具说服力的武器。在开始你的分析任务前，最好多去书架区检索一些 Pandas 指南 and 分析规范。有任何疑惑随时来问我。',
     desc: '沉稳的数据建模大师，精通清洗、挖掘和业务指标体系搭建。',
   },
 };
@@ -66,52 +73,51 @@ const BOOKCASES = {
   },
 };
 
+const MILESTONES = [
+  { id: 'm1', name: '新手起航', subtitle: '选择并进入你的第一个职业岛屿', achieved: true, xpAwarded: 20 },
+  { id: 'm2', name: '快速交付', subtitle: '运行单元测试并成功通过代码编译', achieved: false, xpAwarded: 30 },
+  { id: 'm3', name: '费曼挑战者', subtitle: '通过 AI 同事的数据分析考核并解决团队分歧', achieved: false, xpAwarded: 40 },
+  { id: 'm4', name: '空间守护者', subtitle: '将环境传感器转换为 Celebrate Gold 庆典光效', achieved: false, xpAwarded: 50 },
+];
+
 export default function SpaceBoard() {
+  // Global States
   const {
     playerCoords,
     ambientTheme,
     activeMission,
     unresolvedConflict,
     interactiveNpcId,
-    collisionMatrix,
     syncFromBackend,
     movePlayer,
     triggerBookcaseSearch,
     facingDirection,
     isWalking,
+    remotePlayers,
+    connectWebSocket,
+    disconnectWebSocket,
+    setLocalTyping,
+    setAmbientTheme,
   } = useSpaceStore();
 
+  const { currentCareerId, totalXp, selectCareer, addXp } = useUserStore();
+  const { getMissionStatus, acceptMission, completeMission, submitMission } = useMissionStore();
+
+  // Internal states
   const lastMoveTimeRef = useRef<number>(0);
   const [activeZone, setActiveZone] = useState<string>('Lobby');
 
-  // Audio state
+  // Unified overlay screen state: lobby | quests | portfolio | community | sandbox | null
+  const [activeOverlay, setActiveOverlay] = useState<'lobby' | 'quests' | 'portfolio' | 'community' | 'sandbox' | null>(null);
+
+  // Screen shake animation trigger state
+  const [screenShake, setScreenShake] = useState(false);
+
+  // Audio settings
   const [isMuted, setIsMuted] = useState(false);
   const [volume, setVolume] = useState(0.5);
 
-  useEffect(() => {
-    setIsMuted(audioManager.getMuted());
-    setVolume(audioManager.getVolume());
-  }, []);
-
-  const toggleMute = () => {
-    const nextMute = !isMuted;
-    audioManager.setMuted(nextMute);
-    setIsMuted(nextMute);
-    if (!nextMute) {
-      audioManager.playOpen();
-    }
-  };
-
-  const handleVolumeChange = (vol: number) => {
-    audioManager.setVolume(vol);
-    setVolume(vol);
-    if (isMuted && vol > 0) {
-      audioManager.setMuted(false);
-      setIsMuted(false);
-    }
-  };
-
-  // Bookcase state
+  // Bookcase/RAG state
   const [selectedBookcase, setSelectedBookcase] = useState<typeof BOOKCASES.pandas_library | null>(null);
   const [bookcaseQuery, setBookcaseQuery] = useState('');
   const [ragResults, setRagResults] = useState<SpatialRagChunk[]>([]);
@@ -122,6 +128,7 @@ export default function SpaceBoard() {
   const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'npc'; content: string }>>([]);
   const [chatInput, setChatInput] = useState('');
   const [isNpcStreaming, setIsNpcStreaming] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Meeting & Arbitration state
   const [isMeetingOpen, setIsMeetingOpen] = useState(false);
@@ -132,18 +139,105 @@ export default function SpaceBoard() {
   const [meetingFinished, setMeetingFinished] = useState(false);
   const [arbitrationResponse, setArbitrationResponse] = useState<any | null>(null);
 
-  // Computed Proximity for Table
-  const isAdjacentToTable =
-    playerCoords.x >= 16 &&
-    playerCoords.x <= 19 &&
-    playerCoords.y >= 5 &&
-    playerCoords.y <= 8 &&
-    !(playerCoords.x >= 17 && playerCoords.x <= 18 && playerCoords.y >= 6 && playerCoords.y <= 7);
+  // Lobby lists states
+  const [selectedIsland, setSelectedIsland] = useState<CareerMapIsland | null>(null);
+  const [careerOverrides, setCareerOverrides] = useState<Array<{ id: string; name: string; description: string; unlocked: boolean }>>([]);
 
-  // Sync state initially
+  // Quests list states
+  const [missions, setMissions] = useState<Mission[]>([]);
+  const [loadingMissions, setLoadingMissions] = useState(false);
+
+  // Coding Sandbox Editor states
+  const [sandboxCode, setSandboxCode] = useState<string>(
+    `import pandas as pd\n\ndef clean_and_analyze(filepath):\n    # 1. 读取社区数据集\n    df = pd.read_csv(filepath)\n    \n    # 2. 补齐缺失数据 (fillna)\n    df['active_days'] = df['active_days'].fillna(0)\n    \n    # 3. 分组聚合活跃度 (groupby)\n    summary = df.groupby('career_path')['active_days'].mean().reset_index()\n    \n    return summary`
+  );
+  const [sandboxReport, setSandboxReport] = useState<string>(
+    `任务复盘报告：\n- 业务问题：社区论坛近期用户活跃度出现明显下降。\n- 分析口径：采用 active_days 指标进行平均日活跃聚合。\n- 关键洞察：技术开发类用户的平均活跃时间远低于预期，存在明显的工具链流失。\n- 行动建议：在开发区增加更具交互性的 Pandas 物理书架 RAG，以此补齐学习卡点。`
+  );
+  const [compileLogs, setCompileLog] = useState<string[]>([]);
+  const [isCompiling, setIsCompiling] = useState(false);
+  const [testResult, setTestResult] = useState<'idle' | 'running' | 'success' | 'fail'>('idle');
+
+  // Community whiteboard states
+  const { issues, addReply, displayName, setDisplayName } = useCommunityStore();
+  const [commChannel, setCommChannel] = useState<string>('all');
+  const [newPostTitle, setNewPostTitle] = useState('');
+  const [newPostContent, setNewPostContent] = useState('');
+  const [showCreatePost, setShowPostDialog] = useState(false);
+
+  // Proximity calculations
+  const isAdjacentToTable = useMemo(() => {
+    return (
+      playerCoords.x >= 16 &&
+      playerCoords.x <= 19 &&
+      playerCoords.y >= 5 &&
+      playerCoords.y <= 8 &&
+      !(playerCoords.x >= 17 && playerCoords.x <= 18 && playerCoords.y >= 6 && playerCoords.y <= 7)
+    );
+  }, [playerCoords]);
+
+  const isNearLobbyDesk = useMemo(() => {
+    return playerCoords.y >= 2 && playerCoords.y <= 4 && playerCoords.x >= 3 && playerCoords.x <= 7;
+  }, [playerCoords]);
+
+  const isNearDevWorkstation = useMemo(() => {
+    return (
+      (playerCoords.y >= 13 && playerCoords.y <= 15 && playerCoords.x >= 2 && playerCoords.x <= 8) ||
+      (playerCoords.y >= 17 && playerCoords.y <= 19 && playerCoords.x >= 2 && playerCoords.x <= 8)
+    );
+  }, [playerCoords]);
+
+  const isNearArchiveBookshelf = useMemo(() => {
+    return (
+      (Math.abs(playerCoords.x - BOOKCASES.pandas_library.coords.x) <= 1 && Math.abs(playerCoords.y - BOOKCASES.pandas_library.coords.y) <= 1) ||
+      (Math.abs(playerCoords.x - BOOKCASES.software_design_rules.coords.x) <= 1 && Math.abs(playerCoords.y - BOOKCASES.software_design_rules.coords.y) <= 1)
+    );
+  }, [playerCoords]);
+
+  // Look up active mission details from missions store
+  const activeMissionDetails = useMemo(() => {
+    if (!activeMission) return null;
+    return missions.find((m) => m.id === activeMission.mission_id) || null;
+  }, [activeMission, missions]);
+
+  // Sync initial setup
   useEffect(() => {
-    syncFromBackend();
-  }, [syncFromBackend]);
+    setIsMuted(audioManager.getMuted());
+    setVolume(audioManager.getVolume());
+    syncFromBackend().catch(() => undefined);
+    connectWebSocket();
+
+    // Fetch career islands
+    careerService.getAllCareerIslandsWithSource()
+      .then(({ data }) => {
+        setCareerOverrides(
+          data.map((item) => ({
+            id: item.id,
+            name: item.name,
+            description: item.description,
+            unlocked: item.unlocked,
+          }))
+        );
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disconnectWebSocket();
+    };
+  }, [connectWebSocket, disconnectWebSocket, syncFromBackend]);
+
+  // Fetch career-specific quests when career changes
+  useEffect(() => {
+    if (currentCareerId) {
+      setLoadingMissions(true);
+      missionService.getMissionsByCareerId(currentCareerId)
+        .then((data) => {
+          setMissions(data);
+        })
+        .catch(() => undefined)
+        .finally(() => setLoadingMissions(false));
+    }
+  }, [currentCareerId]);
 
   // Track active zone name
   useEffect(() => {
@@ -155,11 +249,9 @@ export default function SpaceBoard() {
     }
   }, [playerCoords]);
 
-  // Audio Context Ignition on User Gestures
+  // Audio ignition gestures
   useEffect(() => {
-    const handleGesture = () => {
-      audioManager.initContext();
-    };
+    const handleGesture = () => audioManager.initContext();
     window.addEventListener('pointerdown', handleGesture);
     window.addEventListener('keydown', handleGesture);
     return () => {
@@ -175,6 +267,13 @@ export default function SpaceBoard() {
     }
   }, [ambientTheme]);
 
+  // Chat auto-scroll
+  useEffect(() => {
+    if (chatEndRef.current) {
+      chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [chatMessages]);
+
   // Handle Keyboard Inputs
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
@@ -183,7 +282,6 @@ export default function SpaceBoard() {
         return;
       }
 
-      // Check key-spam throttle: 50ms
       const now = Date.now();
       if (now - lastMoveTimeRef.current < 50) return;
 
@@ -210,12 +308,23 @@ export default function SpaceBoard() {
         case ' ':
         case 'enter':
           e.preventDefault();
-          // If adjacent to table, open meeting modal
           if (isAdjacentToTable) {
             startTeamMeetingModal();
             return;
           }
-          // Interact with NPC if nearby
+          if (isNearLobbyDesk) {
+            openOverlay('lobby');
+            return;
+          }
+          if (isNearDevWorkstation) {
+            openOverlay('quests');
+            return;
+          }
+          if (isNearArchiveBookshelf) {
+            setSelectedBookcase(BOOKCASES.pandas_library);
+            audioManager.playOpen();
+            return;
+          }
           if (interactiveNpcId) {
             const npc = NPC_INFO[interactiveNpcId as keyof typeof NPC_INFO];
             if (npc) {
@@ -224,7 +333,7 @@ export default function SpaceBoard() {
           }
           return;
         default:
-          return; // Exit handler
+          return;
       }
 
       if (dx !== 0 || dy !== 0) {
@@ -236,8 +345,115 @@ export default function SpaceBoard() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [movePlayer, interactiveNpcId, isAdjacentToTable]);
+  }, [movePlayer, interactiveNpcId, isAdjacentToTable, isNearLobbyDesk, isNearDevWorkstation, isNearArchiveBookshelf]);
 
+  const openOverlay = (overlayType: 'lobby' | 'quests' | 'portfolio' | 'community' | 'sandbox') => {
+    audioManager.playOpen();
+    setActiveOverlay(overlayType);
+  };
+
+  const closeOverlay = () => {
+    audioManager.playClose();
+    setActiveOverlay(null);
+  };
+
+  const toggleMute = () => {
+    const nextMute = !isMuted;
+    audioManager.setMuted(nextMute);
+    setIsMuted(nextMute);
+    if (!nextMute) {
+      audioManager.playOpen();
+    }
+  };
+
+  const handleVolumeChange = (vol: number) => {
+    audioManager.setVolume(vol);
+    setVolume(vol);
+    if (isMuted && vol > 0) {
+      audioManager.setMuted(false);
+      setIsMuted(false);
+    }
+  };
+
+  // NPCs Chat conversation
+  const startConversation = (npc: typeof NPC_INFO.mentor_ling) => {
+    setActiveChatNpc(npc);
+    audioManager.playOpen();
+    setChatMessages([{ role: 'npc', content: npc.greeting }]);
+    setChatInput('');
+  };
+
+  const closeConversation = () => {
+    setActiveChatNpc(null);
+    audioManager.playClose();
+    setChatMessages([]);
+  };
+
+  const handleSendChatMessage = async () => {
+    if (!chatInput.trim() || !activeChatNpc || isNpcStreaming) return;
+
+    const userMsg = chatInput.trim();
+    setChatInput('');
+    setChatMessages((prev) => [...prev, { role: 'user', content: userMsg }]);
+    setIsNpcStreaming(true);
+    setChatMessages((prev) => [...prev, { role: 'npc', content: '' }]);
+
+    try {
+      await streamChat(activeChatNpc.roleName, userMsg, (chunk: string) => {
+        setChatMessages((prev) => {
+          const lastIndex = prev.length - 1;
+          if (lastIndex >= 0 && prev[lastIndex].role === 'npc') {
+            const updatedMsg = {
+              ...prev[lastIndex],
+              content: prev[lastIndex].content + chunk,
+            };
+            audioManager.playTypewriter();
+            return [...prev.slice(0, lastIndex), updatedMsg];
+          }
+          return prev;
+        });
+      });
+    } catch {
+      setChatMessages((prev) => {
+        const lastIndex = prev.length - 1;
+        if (lastIndex >= 0 && prev[lastIndex].role === 'npc') {
+          const updatedMsg = {
+            ...prev[lastIndex],
+            content: '抱歉，我的神经网络连接稍微有些抖动，建议你再试一次。你也可以前往工位运行代码！',
+          };
+          return [...prev.slice(0, lastIndex), updatedMsg];
+        }
+        return prev;
+      });
+    } finally {
+      setIsNpcStreaming(false);
+    }
+  };
+
+  // Bookshelf search (RAG)
+  const handleRagSearch = async (queryText = bookcaseQuery) => {
+    if (!queryText.trim() || !selectedBookcase || isSearchingRag) return;
+    setBookcaseQuery(queryText);
+    setIsSearchingRag(true);
+    audioManager.playRagScan();
+    try {
+      const response = await triggerBookcaseSearch(selectedBookcase.id, queryText);
+      setRagResults(response.top_k_chunks || []);
+    } catch {
+      setRagResults([]);
+    } finally {
+      setIsSearchingRag(false);
+    }
+  };
+
+  const openBookcasePanel = (bookcase: typeof BOOKCASES.pandas_library) => {
+    setSelectedBookcase(bookcase);
+    audioManager.playOpen();
+    setBookcaseQuery('');
+    setRagResults([]);
+  };
+
+  // Multipart standup session
   const startTeamMeetingModal = async () => {
     setIsMeetingOpen(true);
     audioManager.playOpen();
@@ -247,32 +463,25 @@ export default function SpaceBoard() {
     setMeetingFinished(false);
     setArbitrationResponse(null);
 
-    if (unresolvedConflict) {
-      return;
-    }
+    if (unresolvedConflict) return;
 
     setIsMeetingStreaming(true);
     try {
       const { streamTeamMeeting } = await import('@/services/apiClient');
       await streamTeamMeeting((chunk) => {
-        if (chunk.speaker === 'pm_amy') {
-          if (chunk.chunk) {
-            setMeetingAmyText((prev) => prev + chunk.chunk);
-            audioManager.playTypewriter();
-          }
-        } else if (chunk.speaker === 'mentor_ling') {
-          if (chunk.chunk) {
-            setMeetingLingText((prev) => prev + chunk.chunk);
-            audioManager.playTypewriter();
-          }
+        if (chunk.speaker === 'pm_amy' && chunk.chunk) {
+          setMeetingAmyText((prev) => prev + chunk.chunk);
+          audioManager.playTypewriter();
+        } else if (chunk.speaker === 'mentor_ling' && chunk.chunk) {
+          setMeetingLingText((prev) => prev + chunk.chunk);
+          audioManager.playTypewriter();
         } else if (chunk.status === 'finished') {
           setMeetingFinished(true);
         }
       });
-    } catch (e) {
-      console.warn('Meeting standup stream error, falling back.', e);
-      setMeetingAmyText('大家早上好！本周运营部门逼得非常紧，我们必须把「优惠券核心中心」这一业务抓手快速闭环上线，跑出MVP数据！时间非常紧迫，大家打起精神，本周五务必发布！');
-      setMeetingLingText('Amy，过度追求速度只会埋下无穷的技术债。不重构核心类、不编写完备的测试用例，强行发版只会酿成生产环境事故。质量才是一切的核心。');
+    } catch {
+      setMeetingAmyText('大家早上好！最近活跃用户下滑有些厉害，运营部门希望本周五强行发版我们的主线MVP功能。');
+      setMeetingLingText('产品强行发布只会积压严重的底层技术债。如果我们不补齐数据指标的单元测试，极易产生生产事故。质量重于泰山。');
       setMeetingFinished(true);
     } finally {
       setIsMeetingStreaming(false);
@@ -288,32 +497,30 @@ export default function SpaceBoard() {
       setArbitrationResponse(res);
 
       const playerTurn = res.dialogue_history.find((d: any) => d.speaker === 'player')?.text || '';
-      const amyTurn = res.dialogue_history.find((d: any) => d.speaker === 'pm_amy' && d.text !== 'Hurry up!' && !d.text.includes('听说'))?.text || '';
-      const lingTurn = res.dialogue_history.find((d: any) => d.speaker === 'mentor_ling' && !d.text.includes('急躁'))?.text || '';
+      const amyTurn = res.dialogue_history.find((d: any) => d.speaker === 'pm_amy' && d.text !== 'Hurry up!')?.text || '';
+      const lingTurn = res.dialogue_history.find((d: any) => d.speaker === 'mentor_ling')?.text || '';
 
       setMeetingPlayerText(playerTurn);
-      
-      // Amy Reaction typewriter
+
       let amyWritten = '';
       for (let i = 0; i < amyTurn.length; i++) {
         amyWritten += amyTurn[i];
         setMeetingAmyText(amyWritten);
         audioManager.playTypewriter();
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        await new Promise((resolve) => setTimeout(resolve, 10));
       }
 
-      // Ling Reaction typewriter
       let lingWritten = '';
       for (let i = 0; i < lingTurn.length; i++) {
         lingWritten += lingTurn[i];
         setMeetingLingText(lingWritten);
         audioManager.playTypewriter();
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        await new Promise((resolve) => setTimeout(resolve, 10));
       }
 
       setMeetingFinished(true);
-    } catch (e) {
-      console.error('Failed to arbitrate conflict:', e);
+    } catch {
+      setMeetingFinished(true);
     } finally {
       setIsMeetingStreaming(false);
     }
@@ -325,445 +532,906 @@ export default function SpaceBoard() {
     syncFromBackend();
   };
 
-  // Open Chat Dialogue
-  const startConversation = (npc: typeof NPC_INFO.mentor_ling) => {
-    setActiveChatNpc(npc);
-    audioManager.playOpen();
-    setChatMessages([
-      { role: 'npc', content: npc.greeting }
-    ]);
-    setChatInput('');
-  };
-
-  // Close Chat
-  const closeConversation = () => {
-    setActiveChatNpc(null);
-    audioManager.playClose();
-    setChatMessages([]);
-  };
-
-  // Send Chat message (streams response)
-  const handleSendChatMessage = async () => {
-    if (!chatInput.trim() || !activeChatNpc || isNpcStreaming) return;
-
-    const userMsg = chatInput.trim();
-    setChatInput('');
-    setChatMessages((prev) => [...prev, { role: 'user', content: userMsg }]);
-    setIsNpcStreaming(true);
-
-    // Append an empty NPC message that we'll stream into
-    setChatMessages((prev) => [...prev, { role: 'npc', content: '' }]);
-
+  // Lobby selections
+  const handleSelectCareerIsland = async (islandId: string) => {
     try {
-      await streamChat(
-        activeChatNpc.roleName,
-        userMsg,
-        (chunk: string) => {
-          setChatMessages((prev) => {
-            const copy = [...prev];
-            const lastIndex = copy.length - 1;
-            if (lastIndex >= 0 && copy[lastIndex].role === 'npc') {
-              copy[lastIndex].content += chunk;
-              audioManager.playTypewriter();
-            }
-            return copy;
-          });
-        }
-      );
-    } catch (error) {
-      console.warn('Feynman chat streaming encounter an error, falling back.', error);
-      // Fallback response
-      setChatMessages((prev) => {
-        const copy = [...prev];
-        const lastIndex = copy.length - 1;
-        if (lastIndex >= 0 && copy[lastIndex].role === 'npc') {
-          copy[lastIndex].content = '抱歉，我的神经元连接暂时不稳定，建议你检查本地网络或者稍后再试。你可以先去完成目前工位上的任务！';
-        }
-        return copy;
-      });
-    } finally {
-      setIsNpcStreaming(false);
+      audioManager.playThemeTransition('celebrate-gold');
+      await selectCareer(islandId);
+      closeOverlay();
+      syncFromBackend();
+    } catch (e) {
+      console.error(e);
     }
   };
 
-  // Execute RAG Query
-  const handleRagSearch = async (queryText = bookcaseQuery) => {
-    if (!queryText.trim() || !selectedBookcase || isSearchingRag) return;
+  // Task accept triggers
+  const handleAcceptMission = (missionId: string) => {
+    audioManager.playOpen();
+    acceptMission(missionId);
+    syncFromBackend();
+  };
 
-    setBookcaseQuery(queryText);
-    setIsSearchingRag(true);
-    audioManager.playRagScan();
+  // Sandbox Code compile & tests simulator
+  const handleCompileCode = async () => {
+    if (isCompiling) return;
+    setIsCompiling(true);
+    setTestResult('running');
+    setScreenShake(true);
+    setCompileLog(['⏳ [0.0s] Booting virtual Sandbox Pandas runtime container...']);
+
+    // Play compile sound loop and vibrate
+    audioManager.playThemeTransition('alert-red');
+
+    setTimeout(() => {
+      setCompileLog((prev) => [...prev, '📦 [0.4s] Mounting system core libraries: pandas, numpy, scikit-learn...']);
+      audioManager.playTypewriter();
+    }, 450);
+
+    setTimeout(() => {
+      setCompileLog((prev) => [...prev, '🔬 [0.9s] Injecting task evaluation schema: pandas_active_days_validation_suite...']);
+      audioManager.playTypewriter();
+    }, 900);
+
+    setTimeout(() => {
+      setCompileLog((prev) => [...prev, '⚙️ [1.3s] Executing Pandas DataFrame query assertions...']);
+      audioManager.playTypewriter();
+    }, 1300);
+
+    setTimeout(() => {
+      setScreenShake(false);
+      
+      // Analyze code for groupby/fillna
+      const hasGroupby = sandboxCode.includes('groupby');
+      const hasFillna = sandboxCode.includes('fillna');
+
+      if (hasGroupby && hasFillna) {
+        setCompileLog((prev) => [
+          ...prev,
+          '✓ [1.6s] Test assert_fillna_completions: PASSED',
+          '✓ [1.8s] Test assert_groupby_aggregates: PASSED',
+          '🎉 [2.0s] SUCCESS: All 3/3 testing constraints compiled with absolute success!',
+        ]);
+        setTestResult('success');
+        setAmbientTheme('celebrate-gold');
+        audioManager.playThemeTransition('celebrate-gold');
+      } else {
+        setCompileLog((prev) => [
+          ...prev,
+          '❌ [1.6s] Test assert_fillna_completions: FAILED',
+          `🚨 Syntax Error: pandas dataframe columns contain unresolved NaN values.`,
+          `AttributeError: 'DataFrame' object has no attribute 'fillna' or 'groupby'.`,
+          '💔 [2.0s] COMPILATION FAILED: test suites failed because of syntax anomalies.',
+        ]);
+        setTestResult('fail');
+        setAmbientTheme('alert-red');
+        audioManager.playThemeTransition('alert-red');
+      }
+      setIsCompiling(false);
+    }, 2000);
+  };
+
+  // Submit to AI evaluation
+  const handleSandboxSubmit = async () => {
+    if (!activeMission || isCompiling) return;
+    setIsCompiling(true);
     try {
-      const response = await triggerBookcaseSearch(selectedBookcase.id, queryText);
-      setRagResults(response.top_k_chunks || []);
-    } catch (error) {
-      console.error(error);
+      const evaluationMaterial = [sandboxReport.trim(), sandboxCode.trim() ? `\n\nCode materials:\n${sandboxCode.trim()}` : ''].join('');
+      const result = await missionService.evaluateSubmission(activeMission.mission_id, evaluationMaterial);
+      
+      audioManager.playThemeTransition('celebrate-gold');
+      completeMission(activeMission.mission_id);
+      const gainsXp = Object.values(result.experience_gains || {}).reduce((a, b) => a + b, 0) || 60;
+      addXp(gainsXp);
+      closeOverlay();
+      syncFromBackend();
+      
+      alert(`🎉 恭喜！AI 导师评审通过：\n评分：${gainsXp} XP\n评语：${result.feedback || '非常棒的代码实现与数据分析！'}`);
+    } catch {
+      // Offline fallback
+      completeMission(activeMission.mission_id);
+      addXp(60);
+      closeOverlay();
+      syncFromBackend();
+      alert('⚙️ 离线评估机制：任务已圆满提交，成长 XP 证书已成功归档！');
     } finally {
-      setIsSearchingRag(false);
+      setIsCompiling(false);
     }
   };
 
-  // Click on map bookcase item
-  const openBookcasePanel = (bookcase: typeof BOOKCASES.pandas_library) => {
-    setSelectedBookcase(bookcase);
-    audioManager.playOpen();
-    setBookcaseQuery('');
-    setRagResults([]);
+  // Whiteboard new post
+  const handleCreatePost = () => {
+    if (!newPostTitle.trim() || !newPostContent.trim()) return;
+    useCommunityStore.getState().issues.unshift({
+      id: `issue_${Date.now()}`,
+      careerId: currentCareerId || 'software-engineer',
+      title: newPostTitle,
+      content: newPostContent,
+      authorId: 'local_player',
+      authorName: displayName || '我',
+      priority: 'normal',
+      status: 'open',
+      tags: ['Pandas', '调试'],
+      createdAt: new Date().toISOString(),
+      replies: [],
+    });
+    setNewPostTitle('');
+    setNewPostContent('');
+    setShowPostDialog(false);
+    audioManager.playThemeTransition('celebrate-gold');
   };
+
+  const filteredCommunityIssues = useMemo(() => {
+    return issues.filter((iss) => commChannel === 'all' || iss.careerId === commChannel);
+  }, [issues, commChannel]);
 
   return (
-    <div className="flex flex-col lg:flex-row gap-6 items-start justify-center max-w-7xl mx-auto w-full px-2">
-      {/* 2D Digital Twin Map View */}
-      <div className="flex flex-col items-center">
-        {/* HUD Area */}
-        <div className="w-[816px] border-4 border-slate-700 bg-slate-900 p-4 mb-4 flex justify-between items-center relative overflow-hidden shadow-lg select-none">
-          <div className="absolute inset-0 bg-gradient-to-r from-blue-950/15 via-transparent to-purple-950/15 pointer-events-none" />
-          <div className="flex items-center gap-3">
-            <span className="text-xl">🕹️</span>
-            <div>
-              <div className="font-mono text-[10px] font-bold text-slate-400 tracking-wider">CURRENT LOCATION</div>
-              <h3 className="font-bold text-slate-100 font-mono text-sm uppercase">
-                {activeZone === 'Lobby' && ZONES.LOBBY.name}
-                {activeZone === 'Dev Bay' && ZONES.DEV_BAY.name}
-                {activeZone === 'Meeting Room' && ZONES.MEETING.name}
-                {activeZone === 'Archive Room' && ZONES.ARCHIVE.name}
-              </h3>
+    <div className={`w-screen h-screen flex flex-col xl:flex-row gap-4 justify-between items-center relative select-none p-4 ${screenShake ? 'console-screen-shake' : ''}`}>
+      
+      {/* ================== FLOATING HUD PANELS ================== */}
+
+      {/* 1. TOP MENU CAPSULE */}
+      <div className="fixed top-3 left-1/2 -translate-x-1/2 z-30 flex flex-wrap items-center gap-4 md:gap-6 px-6 py-2.5 glass-cockpit rounded-full select-none shadow-2xl transition-all duration-300 pointer-events-auto">
+        <div className="flex items-center gap-2">
+          <span className="text-xl animate-pulse">🕹️</span>
+          <div>
+            <span className="text-[10px] font-bold text-slate-500 tracking-wider">OFFICECRAFT AI CONSOLE</span>
+            <div className="flex items-center gap-1.5 leading-none">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+              <span className="text-[9px] text-emerald-400 font-bold uppercase font-mono">Cockpit OK</span>
             </div>
           </div>
+        </div>
 
-          {/* Quick Stats */}
-          <div className="flex gap-4 font-mono text-xs items-center">
-            {/* Retro Volume & Mute Controller */}
-            <div className="border border-slate-700 bg-slate-950 px-3 py-1.5 flex items-center gap-3">
-              <button
-                onClick={toggleMute}
-                className="text-sm select-none hover:scale-105 active:scale-95 transition-transform duration-75 focus:outline-none"
-                title={isMuted ? '取消静音' : '静音'}
-              >
-                {isMuted ? '🔇' : '🔊'}
-              </button>
-              <div className="flex items-center gap-1.5 select-none">
-                <span className="text-[10px] text-slate-500 font-bold tracking-wider">VOL</span>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  value={volume}
-                  onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
-                  className="w-16 h-1 rounded bg-slate-800 accent-indigo-500 cursor-pointer border border-slate-700 outline-none"
-                />
-                <span className="text-[10px] font-bold text-slate-400 w-5 text-right">{Math.round(volume * 100)}%</span>
+        <div className="w-[1px] h-6 bg-slate-800" />
+
+        {/* Global User status badge */}
+        <div className="flex gap-4 font-mono text-xs">
+          <div>
+            <div className="text-[8px] text-slate-500 uppercase leading-none">Career Path</div>
+            <div className="text-xs font-bold text-amber-300 leading-tight">
+              {currentCareerId ? (currentCareerId === 'data-analyst' ? '数据分析师' : '初级软件工程师') : '尚未选择职业'}
+            </div>
+          </div>
+          <div>
+            <div className="text-[8px] text-slate-500 uppercase leading-none">Growth XP</div>
+            <div className="text-xs font-bold text-cyan-400 leading-tight">{totalXp} XP</div>
+          </div>
+          <div>
+            <div className="text-[8px] text-slate-500 uppercase leading-none">Rank</div>
+            <div className="text-xs font-bold text-purple-400 leading-tight">Lvl {Math.floor(totalXp / 100) + 1}</div>
+          </div>
+        </div>
+
+        <div className="w-[1px] h-6 bg-slate-800" />
+
+        {/* Location coordinate & volume controls */}
+        <div className="flex items-center gap-4 text-xs font-mono">
+          <div className="flex items-center gap-1 bg-slate-950/60 px-2.5 py-1 border border-slate-800/80 rounded">
+            <span className="text-[10px] text-slate-400">COORDS:</span>
+            <span className="font-bold text-cyan-300">({playerCoords.x}, {playerCoords.y})</span>
+          </div>
+
+          <div className="flex items-center gap-2 bg-slate-950/60 px-3 py-1 border border-slate-800/80 rounded">
+            <button onClick={toggleMute} className="text-sm select-none hover:scale-110 focus:outline-none">
+              {isMuted ? '🔇' : '🔊'}
+            </button>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.1"
+              value={volume}
+              onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
+              className="w-14 h-1 rounded bg-slate-800 accent-indigo-500 cursor-pointer border border-slate-700 outline-none"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* 2. LEFT COCKPIT DECK */}
+      <div className="fixed top-20 left-4 bottom-4 w-[280px] z-30 flex flex-col gap-4 p-4 glass-cockpit overflow-y-auto pointer-events-auto rounded-xl shadow-2xl select-none">
+        <div className="border-b border-slate-800/80 pb-2">
+          <span className="text-[10px] font-bold text-cyan-400 font-mono tracking-widest uppercase">💾 PILOT DETAILS</span>
+          <h3 className="font-bold font-mono text-slate-100 text-sm mt-1">主控面板状态栏</h3>
+        </div>
+
+        {/* User stats overview */}
+        <div className="space-y-2 font-mono">
+          <div className="flex justify-between items-center bg-slate-950/40 p-2.5 border border-slate-800/50">
+            <span className="text-[10px] text-slate-500">职业段位</span>
+            <span className="text-xs font-bold text-amber-300">{currentCareerId === 'data-analyst' ? '初级数据分析顾问' : currentCareerId ? '软件工程实训生' : '待绑定'}</span>
+          </div>
+          <div className="flex justify-between items-center bg-slate-950/40 p-2.5 border border-slate-800/50">
+            <span className="text-[10px] text-slate-500">已点亮能力</span>
+            <span className="text-xs font-bold text-cyan-400">5 个节点</span>
+          </div>
+        </div>
+
+        {/* Environment ambient sensor display */}
+        <div className="space-y-2 font-mono">
+          <span className="text-[9px] font-bold text-slate-500 tracking-wider">💡 空间环境光效传感器</span>
+          <div className={`p-3 text-center border font-bold text-xs select-none rounded animate-pulse ${
+            ambientTheme === 'quiet-blue' ? 'bg-blue-950/40 border-cyan-800/60 text-cyan-400' :
+            ambientTheme === 'alert-red' ? 'bg-red-950/40 border-red-800/60 text-red-400' :
+            ambientTheme === 'celebrate-gold' ? 'bg-amber-950/40 border-amber-800/60 text-amber-400' :
+            'bg-slate-900/40 border-slate-800 text-slate-400'
+          }`}>
+            {ambientTheme === 'quiet-blue' ? '🔵 静谧幽蓝工作环境' :
+             ambientTheme === 'alert-red' ? '🚨 警警报红色异常主题' :
+             ambientTheme === 'celebrate-gold' ? '✨ 金色庆典丰碑主题' :
+             '⚪ 经典日光灰度环境'}
+          </div>
+        </div>
+
+        {/* Active Objectives checklist */}
+        <div className="flex-1 flex flex-col justify-between border-t border-slate-800/80 pt-3">
+          <div className="space-y-3 font-mono">
+            <span className="text-[9px] font-bold text-slate-500 tracking-wider uppercase">🔥 ACTIVE OBJECTIVES</span>
+            
+            {activeMission ? (
+              <div className="space-y-2.5">
+                <h4 className="font-bold text-amber-300 text-xs">{activeMission.title}</h4>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  {activeMissionDetails?.background
+                    ? `${activeMissionDetails.background.substring(0, 75)}...`
+                    : '正在载入实训任务背景细节...'}
+                </p>
+                
+                {/* Simulated checklist */}
+                <div className="space-y-1.5 pt-1">
+                  <div className="flex items-center gap-2 text-[10px] text-emerald-400">
+                    <span>✓</span> <span className="line-through">理解项目数据需求</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[10px] text-slate-300">
+                    <span className="text-cyan-400 animate-pulse">⚙️</span> <span>调用 Pandas fillna 及 groupby 聚合</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[10px] text-slate-500">
+                    <span>☐</span> <span>运行单元测试通过编译</span>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-800/40 space-y-1.5">
+                  <button onClick={() => openBookcasePanel(BOOKCASES.pandas_library)} className="w-full py-1 text-center bg-emerald-950/50 hover:bg-emerald-900/50 border border-emerald-800/50 text-[10px] text-emerald-300">
+                    📖 物理资料书架 (RAG)
+                  </button>
+                  <button onClick={() => openOverlay('sandbox')} className="w-full py-1 text-center bg-cyan-950/50 hover:bg-cyan-900/50 border border-cyan-800/50 text-[10px] text-cyan-300 font-bold animate-pulse">
+                    💻 打开 splitscreen 编译沙盒
+                  </button>
+                </div>
               </div>
-            </div>
-
-            <div className="border border-slate-700 bg-slate-950 px-3 py-1.5 flex items-center gap-2">
-              <span className="text-cyan-400">📍 COORDINATES</span>
-              <span className="font-bold text-cyan-300">({playerCoords.x}, {playerCoords.y})</span>
-            </div>
-            {activeMission && (
-              <div className="border border-indigo-800/40 bg-indigo-950/40 px-3 py-1.5 flex items-center gap-2 animate-pulse">
-                <span className="text-indigo-400">🔥 QUEST:</span>
-                <span className="font-bold text-indigo-300 max-w-[120px] truncate">{activeMission.title}</span>
+            ) : (
+              <div className="border border-dashed border-slate-800/80 p-4 text-center text-slate-500 text-[11px] leading-5">
+                🚨 暂无在研任务，请走到物理大厅接待处绑定职业，或走到主管高凌(x=15, y=6)工位领取任务。
               </div>
             )}
           </div>
         </div>
-
-        {/* The Absolute 25x25 Render Grid */}
-        <div className="relative w-[816px] h-[816px] border-8 border-slate-700 bg-slate-950 p-1 overflow-hidden shadow-2xl crt-screen select-none">
-          
-          {/* ================== RPG Split Floors (Exactly matching the image) ================== */}
-          {/* Left half (x < 12): slate tiled floor */}
-          <div className="absolute inset-y-0 left-0 w-[384px] pixel-slate-floor z-0 pointer-events-none" />
-          {/* Right half (x >= 13): warm wood floorboards */}
-          <div className="absolute inset-y-0 left-[416px] right-0 pixel-wood-floor z-0 pointer-events-none" />
-          {/* Under vertical partition wall (x = 12): dark baseboard filler floor */}
-          <div className="absolute inset-y-0 left-[384px] w-[32px] bg-[#492e1f] z-0 pointer-events-none" />
-
-          {/* Subtle Grid cells layered on top of floors */}
-          <div className="absolute inset-0 bg-pixel-grid opacity-10 pointer-events-none z-5" />
-
-          {/* Patterned Rug under Conference Table from image */}
-          <div className="absolute top-[160px] left-[512px] w-[128px] h-[128px] pixel-patterned-rug z-5 pointer-events-none" />
-
-          {/* Cozy Green Retro Sofas matching the image */}
-          {/* Lobby sofa */}
-          <div className="absolute top-[64px] left-[64px] w-[64px] h-[32px] pixel-green-sofa z-10 pointer-events-none" />
-          {/* Meeting room sofa (bottom-right area) */}
-          <div className="absolute top-[512px] left-[672px] w-[64px] h-[32px] pixel-green-sofa z-10 pointer-events-none" />
-
-          {/* Decorative Terracotta Potted Plants from the image */}
-          <div className="absolute top-[32px] left-[32px] w-[32px] h-[32px] pixel-potted-plant z-10 pointer-events-none" />
-          <div className="absolute top-[32px] left-[736px] w-[32px] h-[32px] pixel-potted-plant z-10 pointer-events-none" />
-
-          {/* Cardboard Boxes matching the top-left boxes stack in image */}
-          <div className="absolute top-[224px] left-[32px] w-[48px] h-[48px] pixel-boxes z-10 pointer-events-none" />
-
-          {/* Mechanical Toolboxes & Drills from left floor of image */}
-          <div className="absolute top-[288px] left-[32px] w-[32px] h-[32px] pixel-toolboxes z-10 pointer-events-none" />
-
-          {/* Lobby Reception desks styled as high-fidelity pixel reception */}
-          <div className="absolute top-[96px] left-[96px] w-[160px] h-[32px] pixel-reception-desk flex items-center justify-center font-bold text-[10px] text-amber-200 z-10">
-            💼 接听前台
-          </div>
-
-          {/* Dev Bay Desks styled as premium oak work desks */}
-          <div className="absolute top-[448px] left-[64px] w-[224px] h-[32px] pixel-dev-desk flex items-center justify-center font-bold text-[10px] text-slate-100 z-10">
-            💻 研发工位 A (Lead Dev)
-          </div>
-          <div className="absolute top-[576px] left-[64px] w-[224px] h-[32px] pixel-dev-desk flex items-center justify-center font-bold text-[10px] text-slate-100 z-10">
-            💻 研发工位 B (Data Eng)
-          </div>
-
-          {/* Divider Walls */}
-          {/* Vertical wood panel wall divider x=12 -> exactly separates left grey tiles and right wood floors */}
-          {Array.from({ length: 25 }).map((_, y) => {
-            if (y !== 5 && y !== 16) {
-              return (
-                <div
-                  key={`v-wall-${y}`}
-                  className="absolute w-[32px] h-[32px] pixel-wood-wall z-10"
-                  style={{ transform: `translate3d(${12 * 32}px, ${y * 32}px, 0)` }}
-                />
-              );
-            }
-            return null;
-          })}
-
-          {/* Horizontal left slate divider y=10 (Lobby/Dev) */}
-          {Array.from({ length: 12 }).map((_, x) => {
-            if (x !== 4) {
-              return (
-                <div
-                  key={`h-left-wall-${x}`}
-                  className="absolute w-[32px] h-[32px] pixel-slate-wall z-10"
-                  style={{ transform: `translate3d(${x * 32}px, ${10 * 32}px, 0)` }}
-                />
-              );
-            }
-            return null;
-          })}
-
-          {/* Horizontal right wood panel divider y=12 (Meeting/Archive) */}
-          {Array.from({ length: 12 }).map((_, i) => {
-            const x = i + 13;
-            if (x !== 18) {
-              return (
-                <div
-                  key={`h-right-wall-${x}`}
-                  className="absolute w-[32px] h-[32px] pixel-wood-wall z-10"
-                  style={{ transform: `translate3d(${x * 32}px, ${12 * 32}px, 0)` }}
-                />
-              );
-            }
-            return null;
-          })}
-
-          {/* RAG Bookcases styled as wooden multi-tiered bookshelf */}
-          {Object.values(BOOKCASES).map((bookcase) => (
-            <div
-              key={bookcase.id}
-              onClick={() => openBookcasePanel(bookcase)}
-              className="absolute w-[32px] h-[32px] pixel-bookshelf hover:scale-110 active:scale-95 transition-all duration-100 flex items-center justify-center text-sm cursor-pointer z-20 group"
-              style={{ transform: `translate3d(${bookcase.coords.x * 32}px, ${bookcase.coords.y * 32}px, 0)` }}
-              title="点击查阅该物理书架 (RAG)"
-            >
-              <div className="absolute bottom-8 scale-0 group-hover:scale-100 transition-all bg-slate-900/90 border border-emerald-500 text-[10px] text-emerald-300 font-mono py-1 px-2 whitespace-nowrap rounded shadow-lg pointer-events-none z-30">
-                {bookcase.name}
-              </div>
-            </div>
-          ))}
-
-          {/* Conference Table in Meeting Room (y = 6 to 7, x = 17 to 18) styled as wood-grain conference table with potted plant */}
-          <div
-            onClick={startTeamMeetingModal}
-            className={`absolute top-[192px] left-[544px] w-[64px] h-[64px] pixel-meeting-table rounded flex flex-col items-center justify-center font-bold text-[10px] text-amber-100 z-15 select-none transition-all duration-500 border-4 cursor-pointer hover:scale-105 active:scale-95 ${
-              unresolvedConflict
-                ? 'border-yellow-400 shadow-[0_0_25px_rgba(234,179,8,0.7)] animate-pulse'
-                : 'border-[#513123] hover:border-[#cf8754]'
-            }`}
-          >
-            <span className="text-lg">{unresolvedConflict ? '⚠️' : '🪴'}</span>
-            <span className="text-[8px] font-mono tracking-wide uppercase">会议桌</span>
-          </div>
-
-          {/* Table Proximity HUD Tip overlay */}
-          {isAdjacentToTable && (
-            <div className="absolute top-[144px] left-[512px] flex flex-col items-center animate-bounce z-30 pointer-events-none">
-              <div className="bg-slate-900/95 border-2 border-yellow-500 text-[9px] font-bold text-yellow-300 font-mono py-1 px-1.5 rounded whitespace-nowrap shadow-md">
-                {unresolvedConflict ? '👉 按 [Enter] 解决团队冲突' : '👉 按 [Enter] 发起每日晨会'}
-              </div>
-              <div className="w-1.5 h-1.5 bg-yellow-500 rotate-45 -mt-1 border-r border-b border-yellow-500" />
-            </div>
-          )}
-
-          {/* Spawn NPCs on map */}
-          {Object.values(NPC_INFO).map((npc) => {
-            const coords = npc.id === 'mentor_ling' ? { x: 15, y: 6 } : npc.id === 'pm_amy' ? { x: 18, y: 5 } : { x: 20, y: 20 };
-            const isTargetNear = interactiveNpcId === npc.id;
-            return (
-              <div
-                key={npc.id}
-                onClick={() => startConversation(npc)}
-                className={`absolute w-[32px] h-[32px] flex items-center justify-center text-xl cursor-pointer z-20 select-none group`}
-                style={{ transform: `translate3d(${coords.x * 32}px, ${coords.y * 32}px, 0)` }}
-              >
-                {/* Adjacent Speech Indicator bubble */}
-                {isTargetNear && (
-                  <div className="absolute bottom-8 flex flex-col items-center animate-bounce z-30">
-                    <div className="bg-slate-900/95 border-2 border-amber-500 text-[9px] font-bold text-amber-300 font-mono py-1 px-1.5 rounded whitespace-nowrap shadow-md">
-                      [Space] 对话
-                    </div>
-                    <div className="w-1.5 h-1.5 bg-amber-500 rotate-45 -mt-1 border-r border-b border-amber-500" />
-                  </div>
-                )}
-
-                {/* Pulsing ring around NPC */}
-                <div className={`absolute inset-0 w-8 h-8 rounded-full border border-dashed animate-spin ${isTargetNear ? 'border-amber-500 opacity-60' : 'border-slate-700 opacity-35'}`} />
-                
-                {/* Character avatar */}
-                <span className="relative z-10 text-2xl filter drop-shadow-md group-hover:scale-110 transition-transform">{npc.emoji}</span>
-
-                {/* Subtitle Indicator */}
-                <div className="absolute top-8 scale-0 group-hover:scale-100 transition-all bg-slate-900/90 border border-slate-700 text-[9px] text-slate-300 py-0.5 px-2 rounded whitespace-nowrap pointer-events-none">
-                  {npc.name}
-                </div>
-              </div>
-            );
-          })}
-
-          {/* The Player Avatar with Custom CSS Pixel Art Character matching the image */}
-          <div
-            className="absolute w-[32px] h-[32px] flex items-center justify-center z-30 transition-all duration-100 select-none pointer-events-none"
-            style={{ transform: `translate3d(${playerCoords.x * 32}px, ${playerCoords.y * 32}px, 0)` }}
-          >
-            {/* Glowing neon shadow ring underneath */}
-            <div className="absolute w-8 h-8 rounded-full bg-cyan-500/20 blur-xs scale-110 animate-ping" />
-            <div className="absolute w-8 h-8 rounded-full border-2 border-cyan-400/40 scale-100" />
-
-            {/* Cute mini coordinate tag on top */}
-            <div className="absolute -top-6 bg-cyan-950/90 border border-cyan-500/60 text-[8px] text-cyan-300 py-0.5 px-1.5 font-mono rounded select-none opacity-0 hover:opacity-100 transition-opacity whitespace-nowrap">
-              YOU ({playerCoords.x},{playerCoords.y})
-            </div>
-
-            {/* Retro CSS Pixel Character Sprite matching the image! */}
-            <div
-              className="pixel-char-sprite"
-              data-direction={facingDirection}
-              data-walking={isWalking ? "true" : "false"}
-            >
-              <div className="pixel-char-hair" />
-              <div className="pixel-char-face" />
-              <div className="pixel-char-body" />
-            </div>
-          </div>
-
-          {/* ================== Ambient Overlays (Breathing Colors) ================== */}
-          {/* Quiet Blue breathing Theme */}
-          {ambientTheme === 'quiet-blue' && (
-            <div className="absolute inset-0 bg-blue-950/20 mix-blend-color-dodge backdrop-brightness-95 pointer-events-none z-10 transition-all duration-1000 animate-pulse border-8 border-cyan-950/40">
-              <div className="absolute inset-0 bg-radial-at-t from-cyan-900/10 via-transparent to-transparent" />
-            </div>
-          )}
-
-          {/* Alert Red Warning pulsing Theme */}
-          {ambientTheme === 'alert-red' && (
-            <div className="absolute inset-0 bg-red-950/25 mix-blend-color-burn pointer-events-none z-10 transition-all duration-300 border-8 border-red-900/40 shadow-[inset_0_0_50px_rgba(239,68,68,0.2)]">
-              <div className="absolute inset-0 bg-radial-at-center from-red-600/10 via-transparent to-transparent" />
-              {/* Overlay Alert text */}
-              <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-red-950 border-2 border-red-500 text-red-500 font-mono text-[10px] py-1 px-3 rounded flex items-center gap-1.5 font-bold animate-pulse">
-                <span>⚠️ SYSTEM CRITICAL SHIELD BREACHED</span>
-              </div>
-            </div>
-          )}
-
-          {/* Celebrate Gold twinkling Theme */}
-          {ambientTheme === 'celebrate-gold' && (
-            <div className="absolute inset-0 bg-amber-500/5 pointer-events-none z-10 transition-all duration-1000 border-8 border-amber-600/20">
-              <div className="absolute inset-0 bg-radial-at-b from-amber-500/15 via-transparent to-transparent" />
-              {/* Twinkling particle stars simulated */}
-              <div className="absolute bottom-12 left-1/4 text-amber-300 text-xs animate-bounce opacity-80">✨</div>
-              <div className="absolute bottom-36 right-1/3 text-amber-300 text-xs animate-pulse opacity-60">✨</div>
-              <div className="absolute bottom-24 right-12 text-amber-300 text-sm animate-bounce opacity-70">🌟</div>
-              <div className="absolute bottom-48 left-12 text-amber-300 text-sm animate-pulse opacity-55">✨</div>
-            </div>
-          )}
-          
-        </div>
-
-        {/* Floating Instruction HUD for controls */}
-        <div className="w-[816px] mt-3 flex justify-between text-[11px] font-mono text-slate-400 select-none">
-          <p>🎮 键盘控键: <span className="text-slate-200 border border-slate-700 bg-slate-900 px-1 py-0.5 rounded font-bold">W / A / S / D</span> 或 <span className="text-slate-200 border border-slate-700 bg-slate-900 px-1 py-0.5 rounded font-bold">↑ / ↓ / ← / →</span> 走动</p>
-          <p>💡 靠近 NPC 时点击或按 <span className="text-amber-400 border border-slate-700 bg-slate-900 px-1 py-0.5 rounded font-bold">空格键</span> 对话 | 点击书架检索知识库</p>
-        </div>
-
-        {/* bottom-aligned classic RPG Dialogue Box overlay */}
-        {activeChatNpc && (
-          <div className="w-[816px] border-4 border-amber-600 bg-slate-950 p-4 mt-4 relative shadow-2xl z-40 animate-slide-in-up">
-            <div className="absolute top-2 right-4 text-slate-500 hover:text-slate-300 text-xs font-mono cursor-pointer" onClick={closeConversation}>
-              [关闭 ESC]
-            </div>
-
-            <div className="flex gap-4">
-              {/* Portrait container */}
-              <div className="w-16 h-16 border-2 border-amber-500 bg-slate-900 flex items-center justify-center text-4xl shrink-0 select-none shadow-md">
-                {activeChatNpc.emoji}
-              </div>
-
-              {/* Dialogue Content */}
-              <div className="flex-1 min-w-0">
-                <div className="font-mono text-xs font-bold text-amber-400 mb-1">{activeChatNpc.name}</div>
-                
-                {/* Messages history view */}
-                <div className="max-h-[160px] overflow-y-auto space-y-3 mb-4 pr-1 font-mono text-xs leading-6 text-slate-200">
-                  {chatMessages.map((msg, index) => (
-                    <div key={index} className={`flex gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`p-2 border max-w-[85%] ${msg.role === 'user' ? 'border-amber-700 bg-amber-950/20 text-slate-300' : 'border-slate-800 bg-slate-900/60'}`}>
-                        {msg.role === 'user' ? '你: ' : ''}{msg.content || <span className="animate-pulse">正在输入...</span>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Input form */}
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !isNpcStreaming) {
-                        handleSendChatMessage();
-                      }
-                    }}
-                    placeholder={`和 ${activeChatNpc.roleName} 交流你关于任务的疑惑...`}
-                    className="flex-1 pixel-input text-xs"
-                    disabled={isNpcStreaming}
-                  />
-                  <PixelButton
-                    variant="primary"
-                    className="py-1 px-4 text-xs"
-                    onClick={handleSendChatMessage}
-                    disabled={isNpcStreaming || !chatInput.trim()}
-                  >
-                    {isNpcStreaming ? '思考中' : '发送'}
-                  </PixelButton>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
-      {/* ================== RAG Glassmorphic Bookshelf Sidebar panel ================== */}
-      {selectedBookcase ? (
-        <div className="w-full lg:w-[400px] border-4 border-emerald-600 bg-slate-900/90 backdrop-blur-md p-5 shadow-2xl relative select-none animate-slide-in-up self-stretch">
+      {/* 3. RIGHT COCKPIT DECK (FAST TRAVEL SHORTCUTS) */}
+      <div className="fixed top-20 right-4 bottom-4 w-[280px] z-30 flex flex-col gap-4 p-4 glass-cockpit overflow-y-auto pointer-events-auto rounded-xl shadow-2xl select-none">
+        <div className="border-b border-slate-800/80 pb-2">
+          <span className="text-[10px] font-bold text-amber-500 font-mono tracking-widest uppercase">🚀 FAST-TRAVEL DECK</span>
+          <h3 className="font-bold font-mono text-slate-100 text-sm mt-1">飞渡导航快捷栏</h3>
+        </div>
+
+        {/* Buttons List */}
+        <div className="flex flex-col gap-2 font-mono">
+          <button onClick={() => openOverlay('lobby')} className="w-full py-2.5 px-3 bg-slate-950/60 hover:bg-amber-950/30 border border-slate-800 hover:border-amber-600/70 text-left text-xs text-slate-300 flex justify-between items-center transition-all group">
+            <span>💼 办事大厅 (Lobby)</span>
+            <span className="text-[9px] text-slate-500 group-hover:text-amber-400">传送 👉</span>
+          </button>
+
+          <button onClick={() => openOverlay('quests')} className="w-full py-2.5 px-3 bg-slate-950/60 hover:bg-blue-950/30 border border-slate-800 hover:border-blue-600/70 text-left text-xs text-slate-300 flex justify-between items-center transition-all group">
+            <span>📋 任务工位 (Quests Board)</span>
+            <span className="text-[9px] text-slate-500 group-hover:text-blue-400">传送 👉</span>
+          </button>
+
+          <button onClick={() => openOverlay('portfolio')} className="w-full py-2.5 px-3 bg-slate-950/60 hover:bg-purple-950/30 border border-slate-800 hover:border-purple-600/70 text-left text-xs text-slate-300 flex justify-between items-center transition-all group">
+            <span>📊 成长档案 (Portfolio)</span>
+            <span className="text-[9px] text-slate-500 group-hover:text-purple-400">传送 👉</span>
+          </button>
+
+          <button onClick={() => openOverlay('community')} className="w-full py-2.5 px-3 bg-slate-950/60 hover:bg-emerald-950/30 border border-slate-800 hover:border-emerald-600/70 text-left text-xs text-slate-300 flex justify-between items-center transition-all group">
+            <span>💬 交流白板 (Community)</span>
+            <span className="text-[9px] text-slate-500 group-hover:text-emerald-400">传送 👉</span>
+          </button>
+
+          <button onClick={() => openBookcasePanel(BOOKCASES.pandas_library)} className="w-full py-2.5 px-3 bg-slate-950/60 hover:bg-teal-950/30 border border-slate-800 hover:border-teal-600/70 text-left text-xs text-slate-300 flex justify-between items-center transition-all group">
+            <span>🏛️ 物理资料库 (Archive)</span>
+            <span className="text-[9px] text-slate-500 group-hover:text-teal-400">检索 👉</span>
+          </button>
+        </div>
+
+        {/* Proximity Tip helper list */}
+        <div className="flex-1 flex flex-col justify-end border-t border-slate-800/80 pt-3">
+          <div className="bg-slate-950/50 p-2.5 border border-slate-800/80 font-mono text-[10px] text-slate-400 space-y-2">
+            <span className="text-[9px] font-bold text-slate-500">📍 物理传感器雷达：</span>
+            
+            {isNearLobbyDesk && (
+              <div className="text-amber-300 font-bold animate-pulse">✓ 靠近大厅前台，按 [Enter] 打开路线大陆。</div>
+            )}
+            {isNearDevWorkstation && (
+              <div className="text-blue-300 font-bold animate-pulse">✓ 靠近研发工位，按 [Enter] 展开任务列表。</div>
+            )}
+            {isNearArchiveBookshelf && (
+              <div className="text-emerald-300 font-bold animate-pulse">✓ 靠近物理资料库，按 [Enter] 开始 RAG 语义。</div>
+            )}
+            {isAdjacentToTable && (
+              <div className="text-indigo-300 font-bold animate-pulse">✓ 靠近会议圆桌，按 [Enter] 开始多智能体晨会！</div>
+            )}
+            {!isNearLobbyDesk && !isNearDevWorkstation && !isNearArchiveBookshelf && !isAdjacentToTable && (
+              <div className="text-slate-500 italic">移动你的角色靠近前台、书架或会议桌会有物理触发！</div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ================== CENTRAL 2D MAP GRID PANEL ================== */}
+      <div className="w-full flex-1 flex items-center justify-center relative">
+        <div className="transform scale-[0.75] md:scale-[0.85] xl:scale-100 origin-center transition-all duration-300">
+          
+          {/* Main RPG grid container */}
+          <div className="relative w-[816px] h-[816px] border-8 border-slate-800 bg-slate-950 p-1 overflow-hidden shadow-2xl crt-screen">
+            
+            {/* Split floors */}
+            <div className="absolute inset-y-0 left-0 w-[384px] pixel-slate-floor z-0 pointer-events-none" />
+            <div className="absolute inset-y-0 left-[416px] right-0 pixel-wood-floor z-0 pointer-events-none" />
+            <div className="absolute inset-y-0 left-[384px] w-[32px] bg-[#492e1f] z-0 pointer-events-none" />
+
+            {/* Grid cell lines overlay */}
+            <div className="absolute inset-0 bg-pixel-grid opacity-10 pointer-events-none z-5" />
+
+            {/* Rug under Conference Table */}
+            <div className="absolute top-[160px] left-[512px] w-[128px] h-[128px] pixel-patterned-rug z-5 pointer-events-none" />
+
+            {/* Green sofas */}
+            <div className="absolute top-[64px] left-[64px] w-[64px] h-[32px] pixel-green-sofa z-10 pointer-events-none" />
+            <div className="absolute top-[512px] left-[672px] w-[64px] h-[32px] pixel-green-sofa z-10 pointer-events-none" />
+
+            {/* Decorative plants */}
+            <div className="absolute top-[32px] left-[32px] w-[32px] h-[32px] pixel-potted-plant z-10 pointer-events-none" />
+            <div className="absolute top-[32px] left-[736px] w-[32px] h-[32px] pixel-potted-plant z-10 pointer-events-none" />
+
+            {/* Top-left boxes stack */}
+            <div className="absolute top-[224px] left-[32px] w-[48px] h-[48px] pixel-boxes z-10 pointer-events-none" />
+            <div className="absolute top-[288px] left-[32px] w-[32px] h-[32px] pixel-toolboxes z-10 pointer-events-none" />
+
+            {/* Lobby reception desk */}
+            <div className="absolute top-[96px] left-[96px] w-[160px] h-[32px] pixel-reception-desk flex items-center justify-center font-bold text-[10px] text-amber-200 z-10 border-2 border-amber-950/20 shadow-md">
+              💼 大厅前台接待处 (Lobby Desk)
+            </div>
+
+            {/* Dev workstations */}
+            <div className="absolute top-[448px] left-[64px] w-[224px] h-[32px] pixel-dev-desk flex items-center justify-center font-bold text-[10px] text-slate-100 z-10">
+              💻 研发工位 A ( G-5 Code Console)
+            </div>
+            <div className="absolute top-[576px] left-[64px] w-[224px] h-[32px] pixel-dev-desk flex items-center justify-center font-bold text-[10px] text-slate-100 z-10">
+              💻 研发工位 B (Pandas Analytics Engine)
+            </div>
+
+            {/* Partition divider walls */}
+            {Array.from({ length: 25 }).map((_, y) => {
+              if (y !== 5 && y !== 16) {
+                return (
+                  <div
+                    key={`v-wall-${y}`}
+                    className="absolute w-[32px] h-[32px] pixel-wood-wall z-10"
+                    style={{ transform: `translate3d(${12 * 32}px, ${y * 32}px, 0)` }}
+                  />
+                );
+              }
+              return null;
+            })}
+
+            {/* Horizontal left slate divider y=10 */}
+            {Array.from({ length: 12 }).map((_, x) => {
+              if (x !== 4) {
+                return (
+                  <div
+                    key={`h-left-wall-${x}`}
+                    className="absolute w-[32px] h-[32px] pixel-slate-wall z-10"
+                    style={{ transform: `translate3d(${x * 32}px, ${10 * 32}px, 0)` }}
+                  />
+                );
+              }
+              return null;
+            })}
+
+            {/* Horizontal right divider y=12 */}
+            {Array.from({ length: 12 }).map((_, i) => {
+              const x = i + 13;
+              if (x !== 18) {
+                return (
+                  <div
+                    key={`h-right-wall-${x}`}
+                    className="absolute w-[32px] h-[32px] pixel-wood-wall z-10"
+                    style={{ transform: `translate3d(${x * 32}px, ${12 * 32}px, 0)` }}
+                  />
+                );
+              }
+              return null;
+            })}
+
+            {/* RAG Bookcases */}
+            {Object.values(BOOKCASES).map((bookcase) => (
+              <div
+                key={bookcase.id}
+                onClick={() => openBookcasePanel(bookcase)}
+                className="absolute w-[32px] h-[32px] pixel-bookshelf hover:scale-110 active:scale-95 transition-all duration-100 flex items-center justify-center text-sm cursor-pointer z-20 group"
+                style={{ transform: `translate3d(${bookcase.coords.x * 32}px, ${bookcase.coords.y * 32}px, 0)` }}
+                title="点击查阅物理书架 (RAG)"
+              >
+                <div className="absolute bottom-8 scale-0 group-hover:scale-100 transition-all bg-slate-900/95 border border-emerald-500 text-[10px] text-emerald-300 font-mono py-1 px-2 whitespace-nowrap rounded shadow-lg pointer-events-none z-30">
+                  {bookcase.name}
+                </div>
+              </div>
+            ))}
+
+            {/* Conference roundtable */}
+            <div
+              onClick={startTeamMeetingModal}
+              className={`absolute top-[192px] left-[544px] w-[64px] h-[64px] pixel-meeting-table rounded flex flex-col items-center justify-center font-bold text-[10px] text-amber-100 z-15 transition-all duration-500 border-4 cursor-pointer hover:scale-105 active:scale-95 ${
+                unresolvedConflict
+                  ? 'border-yellow-400 shadow-[0_0_25px_rgba(234,179,8,0.7)] animate-pulse'
+                  : 'border-[#513123] hover:border-[#cf8754]'
+              }`}
+            >
+              <span className="text-lg">{unresolvedConflict ? '⚠️' : '🪴'}</span>
+              <span className="text-[8px] font-mono tracking-wide uppercase">晨会圆桌</span>
+            </div>
+
+            {/* NPCs characters spawn */}
+            {Object.values(NPC_INFO).map((npc) => {
+              const coords = npc.id === 'mentor_ling' ? { x: 15, y: 6 } : npc.id === 'pm_amy' ? { x: 18, y: 5 } : { x: 20, y: 20 };
+              const isTargetNear = interactiveNpcId === npc.id;
+              return (
+                <div
+                  key={npc.id}
+                  onClick={() => startConversation(npc)}
+                  className="absolute w-[32px] h-[32px] flex items-center justify-center text-xl cursor-pointer z-20 select-none group"
+                  style={{ transform: `translate3d(${coords.x * 32}px, ${coords.y * 32}px, 0)` }}
+                >
+                  {isTargetNear && (
+                    <div className="absolute bottom-8 flex flex-col items-center animate-bounce z-30">
+                      <div className="bg-slate-900/95 border-2 border-amber-500 text-[9px] font-bold text-amber-300 font-mono py-1 px-1.5 rounded whitespace-nowrap shadow-md">
+                        [Space] 对话
+                      </div>
+                      <div className="w-1.5 h-1.5 bg-amber-500 rotate-45 -mt-1 border-r border-b border-amber-500" />
+                    </div>
+                  )}
+                  <div className={`absolute inset-0 w-8 h-8 rounded-full border border-dashed animate-spin ${isTargetNear ? 'border-amber-500 opacity-60' : 'border-slate-700 opacity-35'}`} />
+                  <span className="relative z-10 text-2xl filter drop-shadow-md group-hover:scale-110 transition-transform">{npc.emoji}</span>
+                  <div className="absolute top-8 scale-0 group-hover:scale-100 transition-all bg-slate-900/90 border border-slate-700 text-[9px] text-slate-300 py-0.5 px-2 rounded whitespace-nowrap pointer-events-none">
+                    {npc.name}
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Player Avatar */}
+            <div
+              className="absolute w-[32px] h-[32px] flex items-center justify-center z-30 transition-all duration-100 select-none pointer-events-none"
+              style={{ transform: `translate3d(${playerCoords.x * 32}px, ${playerCoords.y * 32}px, 0)` }}
+            >
+              <div className="absolute w-8 h-8 rounded-full bg-cyan-500/20 blur-xs scale-110 animate-ping" />
+              <div className="absolute w-8 h-8 rounded-full border-2 border-cyan-400/40 scale-100" />
+
+              <div className="pixel-char-sprite" data-direction={facingDirection} data-walking={isWalking ? "true" : "false"}>
+                <div className="pixel-char-hair" />
+                <div className="pixel-char-face" />
+                <div className="pixel-char-body" />
+              </div>
+            </div>
+
+            {/* Remote Players */}
+            {Object.entries(remotePlayers).map(([id, p]) => {
+              let hash = 0;
+              for (let i = 0; i < id.length; i++) {
+                hash = id.charCodeAt(i) + ((hash << 5) - hash);
+              }
+              const hue = Math.abs(hash) % 360;
+              const shortId = id.substring(0, 5);
+
+              return (
+                <div
+                  key={id}
+                  className="absolute w-[32px] h-[32px] flex items-center justify-center z-30 transition-all duration-100 select-none pointer-events-none"
+                  style={{ transform: `translate3d(${p.x * 32}px, ${p.y * 32}px, 0)` }}
+                >
+                  <div className="absolute w-8 h-8 rounded-full bg-indigo-500/20 blur-xs scale-110 animate-ping" style={{ filter: `hue-rotate(${hue}deg)` }} />
+                  <div className="absolute w-8 h-8 rounded-full border-2 border-indigo-400/40 scale-100" style={{ filter: `hue-rotate(${hue}deg)` }} />
+                  
+                  <div className="absolute -top-6 bg-slate-950/90 border border-slate-700 text-[8px] text-slate-300 py-0.5 px-1.5 font-mono rounded select-none whitespace-nowrap">
+                    Guest ({shortId})
+                  </div>
+
+                  <div className="pixel-char-sprite" data-direction={p.facingDirection} data-walking={p.isWalking ? "true" : "false"} style={{ filter: `hue-rotate(${hue}deg)` }}>
+                    <div className="pixel-char-hair" />
+                    <div className="pixel-char-face" />
+                    <div className="pixel-char-body" />
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Ambient Overlays (Prompt-to-Light) */}
+            {ambientTheme === 'quiet-blue' && (
+              <div className="absolute inset-0 bg-blue-950/15 mix-blend-color-dodge backdrop-brightness-95 pointer-events-none z-10 animate-pulse border-8 border-cyan-950/40" />
+            )}
+            {ambientTheme === 'alert-red' && (
+              <div className="absolute inset-0 bg-red-950/20 mix-blend-color-burn pointer-events-none z-10 border-8 border-red-900/40 shadow-[inset_0_0_50px_rgba(239,68,68,0.25)] animate-pulse">
+                <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-red-950 border-2 border-red-500 text-red-500 font-mono text-[9px] py-1 px-3 rounded flex items-center gap-1.5 font-bold animate-bounce">
+                  <span>⚠️ COMPILATION UNIT TESTS DISRUPTED</span>
+                </div>
+              </div>
+            )}
+            {ambientTheme === 'celebrate-gold' && (
+              <div className="absolute inset-0 bg-amber-500/5 pointer-events-none z-10 border-8 border-amber-600/20">
+                <div className="absolute inset-0 bg-radial-at-b from-amber-500/10 via-transparent to-transparent" />
+                <div className="absolute bottom-12 left-1/4 text-amber-300 text-xs animate-bounce opacity-80">✨</div>
+                <div className="absolute bottom-36 right-1/3 text-amber-300 text-xs animate-pulse opacity-60">✨</div>
+                <div className="absolute bottom-24 right-12 text-amber-300 text-sm animate-bounce opacity-70">🌟</div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ================== HIGH-FIDELITY SPATIAL OVERLAYS (MODALS) ================== */}
+
+      {/* 1. LOBBY OVERLAY */}
+      {activeOverlay === 'lobby' && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-40 flex items-center justify-center p-4 select-none">
+          <div className="w-full max-w-5xl bg-slate-900 border-4 border-amber-500 shadow-2xl p-6 rounded-lg relative flex flex-col md:flex-row gap-6 animate-slide-in-up">
+            <button onClick={closeOverlay} className="absolute top-4 right-4 text-slate-500 hover:text-slate-300 text-sm font-mono">[关闭 Esc]</button>
+            
+            <div className="flex-1">
+              <div className="mb-4">
+                <PixelBadge variant="warning">LOBBY WORLD MAP</PixelBadge>
+                <h3 className="pixel-title text-xl text-amber-300 font-bold mt-1">请绑定并进入你的第一条职业大陆</h3>
+              </div>
+              <CareerWorldMap onIslandSelect={setSelectedIsland} careerOverrides={careerOverrides} />
+            </div>
+
+            <div className="w-full md:w-[320px] shrink-0">
+              {selectedIsland ? (
+                <div className="space-y-4">
+                  <div className="border-4 border-slate-700 bg-slate-950/80 p-4 rounded text-slate-200">
+                    <h4 className="font-bold text-amber-400 text-base">{selectedIsland.name}</h4>
+                    <p className="text-xs text-slate-400 mt-1 leading-5">{selectedIsland.description}</p>
+                    <div className="mt-3 text-xs space-y-1.5 text-slate-300">
+                      <div>🧑‍🏫 <strong>导师：</strong>{selectedIsland.mentor}</div>
+                      <div>🏆 <strong>核心：</strong>{selectedIsland.currentTheme}</div>
+                    </div>
+                  </div>
+                  <PixelButton fullWidth onClick={() => handleSelectCareerIsland(selectedIsland.id)}>
+                    绑定此职业规划
+                  </PixelButton>
+                </div>
+              ) : (
+                <CareerPreviewPanel career={null} />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. QUEST BOARD OVERLAY */}
+      {activeOverlay === 'quests' && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-40 flex items-center justify-center p-4 select-none">
+          <div className="w-full max-w-4xl bg-slate-900 border-4 border-indigo-500 shadow-2xl p-6 rounded-lg relative flex flex-col gap-4 animate-slide-in-up">
+            <button onClick={closeOverlay} className="absolute top-4 right-4 text-slate-500 hover:text-slate-300 text-sm font-mono">[关闭 Esc]</button>
+            
+            <div className="border-b-4 border-indigo-950 pb-3">
+              <PixelBadge variant="primary">CAREER QUEST BOARD</PixelBadge>
+              <h3 className="pixel-title text-xl text-slate-100 font-bold mt-1">主线与支线实训研发任务板</h3>
+            </div>
+
+            {loadingMissions ? (
+              <div className="text-center py-12 text-slate-400 font-mono">正在检索可用任务包...</div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[450px] overflow-y-auto pr-1">
+                {missions.length > 0 ? (
+                  missions.map((mission) => {
+                    const status = getMissionStatus(mission.id, mission.status);
+                    return (
+                      <div key={mission.id} className="border-2 border-slate-700 bg-slate-950/60 p-4 rounded flex flex-col justify-between hover:border-indigo-500 transition-colors">
+                        <div className="space-y-2">
+                          <div className="flex justify-between items-start">
+                            <PixelBadge variant={mission.difficulty === 'hard' ? 'danger' : 'warning'} className="text-[10px]">
+                              {mission.difficulty === 'easy' ? '初级' : '中级'}
+                            </PixelBadge>
+                            <span className="text-[11px] font-bold text-emerald-400">+{mission.rewardExp} XP</span>
+                          </div>
+                          <h4 className="font-bold text-slate-200 text-sm">{mission.title}</h4>
+                          <p className="text-xs text-slate-400 leading-relaxed font-mono">{mission.background.substring(0, 110)}...</p>
+                        </div>
+
+                        <div className="mt-4 pt-3 border-t border-slate-900 flex justify-between items-center">
+                          <span className="text-[10px] text-slate-500">状态: {status === MissionStatus.COMPLETED ? '✓ 已完成' : status === MissionStatus.ACCEPTED ? '🔥 正在开发中' : '☐ 可领取'}</span>
+                          
+                          {status === MissionStatus.COMPLETED ? (
+                            <PixelBadge variant="success">已完成归档</PixelBadge>
+                          ) : status === MissionStatus.ACCEPTED ? (
+                            <PixelButton className="py-1 px-3 text-xs" onClick={() => openOverlay('sandbox')}>
+                              去往沙盒 coding
+                            </PixelButton>
+                          ) : (
+                            <PixelButton variant="secondary" className="py-1 px-3 text-xs" onClick={() => handleAcceptMission(mission.id)}>
+                              领取实训任务
+                            </PixelButton>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="col-span-2 text-center py-8 text-slate-500 border border-dashed border-slate-800">
+                    未检索到该职业任务，请前往办事大厅接待处绑定。
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 3. PORTFOLIO OVERLAY */}
+      {activeOverlay === 'portfolio' && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-40 flex items-center justify-center p-4 select-none">
+          <div className="w-full max-w-4xl bg-slate-900 border-4 border-purple-500 shadow-2xl p-6 rounded-lg relative flex flex-col gap-6 animate-slide-in-up">
+            <button onClick={closeOverlay} className="absolute top-4 right-4 text-slate-500 hover:text-slate-300 text-sm font-mono">[关闭 Esc]</button>
+            
+            <div className="border-b-4 border-purple-950 pb-3">
+              <PixelBadge variant="warning">GROWTH PORTFOLIO</PixelBadge>
+              <h3 className="pixel-title text-xl text-slate-100 font-bold mt-1">初学者个人成长档案馆</h3>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 font-mono">
+              <div className="col-span-1 space-y-4">
+                <div className="bg-slate-950 p-4 border-2 border-purple-900/60 rounded text-center">
+                  <div className="text-[10px] text-slate-500">成长评级 (Growth Rating)</div>
+                  <div className="text-4xl font-bold text-amber-300 mt-2">{totalXp} <span className="text-sm">XP</span></div>
+                  <div className="text-xs text-purple-400 mt-1">Rank: Level {Math.floor(totalXp / 100) + 1}</div>
+                </div>
+
+                <div className="bg-slate-950 p-3 border border-slate-800 rounded space-y-1 text-xs text-slate-400">
+                  <div>📌 <strong>认证单位：</strong>OfficeCraft AI</div>
+                  <div>📄 <strong>履历证书：</strong>已归档 1 个主线证据</div>
+                </div>
+              </div>
+
+              <div className="col-span-2 bg-slate-950 p-5 border-2 border-purple-900/40 rounded flex flex-col justify-between">
+                <div>
+                  <h4 className="font-bold text-purple-400 text-sm mb-3">🏅 实训里程碑证据墙</h4>
+                  <div className="divide-y divide-slate-900">
+                    {MILESTONES.map((milestone) => (
+                      <div key={milestone.id} className="py-2.5 flex items-center justify-between gap-3 text-xs">
+                        <div className="flex items-center gap-3">
+                          <span className={`w-5 h-5 rounded-full flex items-center justify-center border font-bold ${milestone.id === 'm1' || totalXp >= 150 ? 'border-emerald-500 text-emerald-400 bg-emerald-950/20' : 'border-slate-800 text-slate-600'}`}>✓</span>
+                          <div>
+                            <div className="font-bold text-slate-200">{milestone.name}</div>
+                            <div className="text-[10px] text-slate-500">{milestone.subtitle}</div>
+                          </div>
+                        </div>
+                        <span className="font-bold text-emerald-400">+{milestone.xpAwarded} XP</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 4. COMMUNITY WHITEBOARD OVERLAY */}
+      {activeOverlay === 'community' && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-40 flex items-center justify-center p-4 select-none">
+          <div className="w-full max-w-5xl bg-slate-900 border-4 border-emerald-500 shadow-2xl p-6 rounded-lg relative flex flex-col gap-4 animate-slide-in-up">
+            <button onClick={closeOverlay} className="absolute top-4 right-4 text-slate-500 hover:text-slate-300 text-sm font-mono">[关闭 Esc]</button>
+            
+            <div className="border-b-4 border-emerald-950 pb-3 flex justify-between items-center">
+              <div>
+                <PixelBadge variant="success">COMMUNITY WHITEBOARD</PixelBadge>
+                <h3 className="pixel-title text-xl text-slate-100 font-bold mt-1">工程师交流白板论坛</h3>
+              </div>
+              <PixelButton className="py-1 px-4 text-xs" onClick={() => setShowPostDialog(true)}>发布问题工单</PixelButton>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 font-mono">
+              <div className="col-span-1 bg-slate-950 p-4 border border-slate-800 rounded">
+                <span className="text-[10px] text-slate-500 tracking-wider">频道索引 (CHANNELS)</span>
+                <div className="flex flex-col gap-1.5 mt-3">
+                  <button onClick={() => setCommChannel('all')} className={`py-1.5 px-2 text-left text-xs ${commChannel === 'all' ? 'bg-emerald-950/40 border border-emerald-800 text-emerald-300' : 'text-slate-400'}`}>全部讨论</button>
+                  <button onClick={() => setCommChannel('data-analyst')} className={`py-1.5 px-2 text-left text-xs ${commChannel === 'data-analyst' ? 'bg-emerald-950/40 border border-emerald-800 text-emerald-300' : 'text-slate-400'}`}>数据山脉</button>
+                  <button onClick={() => setCommChannel('software-engineer')} className={`py-1.5 px-2 text-left text-xs ${commChannel === 'software-engineer' ? 'bg-emerald-950/40 border border-emerald-800 text-emerald-300' : 'text-slate-400'}`}>软件工程</button>
+                </div>
+              </div>
+
+              <div className="col-span-3 space-y-3 max-h-[400px] overflow-y-auto pr-1">
+                {filteredCommunityIssues.map((issue) => (
+                  <div key={issue.id} className="border border-slate-800 bg-slate-950/80 p-4 rounded hover:border-emerald-600 transition-colors">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-[10px] text-slate-500">作者: {issue.authorName}</span>
+                      <PixelBadge variant="neutral" className="text-[9px]">{issue.careerId}</PixelBadge>
+                    </div>
+                    <h4 className="font-bold text-slate-200 text-sm">{issue.title}</h4>
+                    <p className="text-xs text-slate-400 mt-1 leading-5">{issue.content}</p>
+                    
+                    {issue.replies.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-slate-900 space-y-2">
+                        {issue.replies.map((rep) => (
+                          <div key={rep.id} className="bg-slate-900/60 p-2 text-[10px] border border-slate-800/80 text-slate-300">
+                            <strong>{rep.authorName}:</strong> {rep.content}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. CODE SANDBOX WORKSPACE (SLIDE-OUT DRAWER) */}
+      {activeOverlay === 'sandbox' && activeMission && (
+        <div className="fixed top-20 right-4 bottom-4 w-[740px] bg-slate-950/95 border-2 border-cyan-500 rounded-xl shadow-2xl z-40 p-5 flex flex-col gap-4 animate-slide-in-right pointer-events-auto select-none">
+          <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xl animate-spin">⚙️</span>
+              <div>
+                <span className="text-[9px] font-bold text-cyan-400 font-mono tracking-widest">SPLITSCREEN SANDBOX COMPILER</span>
+                <h3 className="font-bold text-slate-100 text-sm">Pandas & Python 代码编译实训台</h3>
+              </div>
+            </div>
+            <button onClick={closeOverlay} className="text-slate-500 hover:text-slate-300 text-xs font-mono">[关闭 Esc]</button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 flex-1 min-h-0 font-mono">
+            {/* Left Col: Instructions & handbook */}
+            <div className="flex flex-col gap-3 overflow-y-auto pr-1">
+              <div className="bg-slate-900/50 p-4 border border-slate-800/60 rounded">
+                <span className="text-[10px] text-slate-500 uppercase tracking-widest">Quest Overview</span>
+                <h4 className="font-bold text-amber-300 text-xs mt-1">{activeMission.title}</h4>
+                <p className="text-[11px] text-slate-300 mt-2 leading-relaxed">
+                  {activeMissionDetails?.background || activeMissionDetails?.description || '正在载入实训任务背景细节...'}
+                </p>
+              </div>
+
+              <div className="bg-slate-900/50 p-4 border border-slate-800/60 rounded space-y-2">
+                <span className="text-[10px] text-slate-500 uppercase tracking-widest">Delivery Requirements</span>
+                <ul className="text-[11px] text-slate-400 space-y-1.5 list-disc pl-4">
+                  <li>清洗缺口: 必须包含 <code className="text-cyan-400 bg-slate-950 px-1">.fillna()</code>。</li>
+                  <li>分组聚合: 必须包含 <code className="text-cyan-400 bg-slate-950 px-1">.groupby()</code>。</li>
+                  <li>完成任务后点击 <strong className="text-slate-200">运行测试</strong> 触发空间光效。</li>
+                </ul>
+              </div>
+
+              <div className="bg-slate-900/50 p-4 border border-slate-800/60 rounded flex-1">
+                <span className="text-[10px] text-slate-500 uppercase tracking-widest">AI Mentor Review Dialogue</span>
+                <div className="mt-2 text-[11px] text-slate-400 italic bg-slate-950 p-3 border border-slate-900 rounded leading-relaxed">
+                  林澈：&ldquo;数据清洗最重要的逻辑是确保缺失项（NaN）填充完毕，再去 groupby 平均分组，千万别把 groupby 写成了 group_by！&rdquo;
+                </div>
+              </div>
+            </div>
+
+            {/* Right Col: Code Editor & Terminal */}
+            <div className="flex flex-col gap-3 min-h-0">
+              <div className="flex-1 flex flex-col border border-slate-800 rounded bg-slate-900/40 relative">
+                <div className="absolute top-2 right-4 text-[9px] text-slate-500">EDITOR.PY</div>
+                <textarea
+                  value={sandboxCode}
+                  onChange={(e) => setSandboxCode(e.target.value)}
+                  className="w-full flex-1 p-3 bg-slate-950 text-emerald-400 text-xs font-mono outline-none border-0 focus:ring-0 select-text resize-none"
+                  style={{ fontFamily: '"Courier New", Courier, monospace' }}
+                />
+              </div>
+
+              {/* Terminal Logs Output */}
+              <div className="h-44 bg-slate-950 border border-slate-900 p-3 overflow-y-auto space-y-1 text-[10px] text-slate-400 font-mono">
+                {compileLogs.length === 0 ? (
+                  <div className="text-slate-600 italic">Terminal log standby. Click Run Tests above to compile...</div>
+                ) : (
+                  compileLogs.map((log, idx) => (
+                    <div key={idx} className={log.startsWith('✓') ? 'text-emerald-400 font-bold' : log.startsWith('❌') || log.startsWith('🚨') ? 'text-red-400 font-bold' : 'text-slate-300'}>
+                      {log}
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={handleCompileCode}
+                  disabled={isCompiling}
+                  className="flex-1 py-2 text-center bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold text-xs rounded transition-colors active:scale-95 duration-75"
+                >
+                  {isCompiling ? '⌛ 编译中...' : '🛠️ 运行测试并编译 (Run)'}
+                </button>
+                <button
+                  onClick={handleSandboxSubmit}
+                  disabled={testResult !== 'success' || isCompiling}
+                  className={`flex-1 py-2 text-center font-bold text-xs rounded transition-colors active:scale-95 duration-75 ${
+                    testResult === 'success' ? 'bg-amber-500 hover:bg-amber-400 text-slate-950' : 'bg-slate-850 text-slate-500 cursor-not-allowed'
+                  }`}
+                >
+                  🚀 交付并提交评审
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================== CLASSIC RPG DIALOGUE BOX OVERLAYS ================== */}
+
+      {activeChatNpc && (
+        <div className="w-[816px] fixed bottom-4 left-1/2 -translate-x-1/2 border-4 border-amber-600 bg-slate-950 p-4 shadow-2xl z-40 animate-slide-in-up rounded">
+          <div className="absolute top-2 right-4 text-slate-500 hover:text-slate-300 text-xs font-mono cursor-pointer" onClick={closeConversation}>
+            [关闭 Esc]
+          </div>
+
+          <div className="flex gap-4 font-mono">
+            <div className="w-16 h-16 border-2 border-amber-500 bg-slate-900 flex items-center justify-center text-4xl shrink-0 select-none shadow-md">
+              {activeChatNpc.emoji}
+            </div>
+
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-bold text-amber-400 mb-1">{activeChatNpc.name}</div>
+              
+              <div className="max-h-[160px] overflow-y-auto space-y-3 mb-4 pr-1 text-xs leading-6 text-slate-200">
+                {chatMessages.map((msg, index) => (
+                  <div key={index} className={`flex gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`p-2 border max-w-[85%] ${msg.role === 'user' ? 'border-amber-700 bg-amber-950/20 text-slate-300' : 'border-slate-800 bg-slate-900/60'}`}>
+                      {msg.role === 'user' ? '你: ' : ''}{msg.content || <span className="animate-pulse">正在思考...</span>}
+                    </div>
+                  </div>
+                ))}
+                <div ref={chatEndRef} />
+              </div>
+
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onFocus={() => setLocalTyping(true)}
+                  onBlur={() => setLocalTyping(false)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !isNpcStreaming) {
+                      handleSendChatMessage();
+                    }
+                  }}
+                  placeholder={`和 ${activeChatNpc.roleName} 交流你的疑惑...`}
+                  className="flex-1 pixel-input text-xs"
+                  disabled={isNpcStreaming}
+                />
+                <PixelButton
+                  variant="primary"
+                  className="py-1 px-4 text-xs"
+                  onClick={handleSendChatMessage}
+                  disabled={isNpcStreaming || !chatInput.trim()}
+                >
+                  {isNpcStreaming ? '思考中' : '发送'}
+                </PixelButton>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RAG sidebar Bookshelf panel */}
+      {selectedBookcase && (
+        <div className="fixed top-20 right-4 bottom-4 w-[380px] border-4 border-emerald-600 bg-slate-900/90 backdrop-blur-md p-5 shadow-2xl z-40 select-none animate-slide-in-right rounded-lg">
           <div className="absolute top-2 right-4 text-slate-500 hover:text-slate-300 text-xs font-mono cursor-pointer" onClick={() => { setSelectedBookcase(null); audioManager.playClose(); }}>
             [关闭 ×]
           </div>
 
-          <div className="flex items-center gap-2 mb-3">
+          <div className="flex items-center gap-2 mb-3 font-mono">
             <span className="text-xl">🏛️</span>
             <h3 className="font-bold font-mono text-emerald-300 text-sm uppercase">{selectedBookcase.name}</h3>
           </div>
@@ -772,15 +1440,14 @@ export default function SpaceBoard() {
             {selectedBookcase.desc}
           </p>
 
-          {/* Quick searches tag list */}
-          <div className="mb-4">
-            <h4 className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-2">💡 快捷检索关键词</h4>
+          <div className="mb-4 font-mono">
+            <h4 className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-2">💡 快捷检索</h4>
             <div className="flex flex-wrap gap-1.5">
               {selectedBookcase.quickQueries.map((tag) => (
                 <button
                   key={tag}
                   onClick={() => handleRagSearch(tag)}
-                  className="text-[10px] font-mono bg-emerald-950/40 border border-emerald-900/60 hover:border-emerald-500 text-emerald-400 px-2 py-1 select-none active:scale-95 transition-all"
+                  className="text-[10px] font-mono bg-emerald-950/40 border border-emerald-900/60 hover:border-emerald-500 text-emerald-400 px-2 py-1 active:scale-95 transition-all"
                 >
                   {tag}
                 </button>
@@ -788,13 +1455,14 @@ export default function SpaceBoard() {
             </div>
           </div>
 
-          {/* Search bar input */}
-          <div className="space-y-3 mb-5">
+          <div className="space-y-3 mb-5 font-mono">
             <div className="flex gap-2">
               <input
                 type="text"
                 value={bookcaseQuery}
                 onChange={(e) => setBookcaseQuery(e.target.value)}
+                onFocus={() => setLocalTyping(true)}
+                onBlur={() => setLocalTyping(false)}
                 placeholder="输入语义检索问题..."
                 className="flex-1 pixel-input text-xs border-emerald-900 focus:border-emerald-500"
                 onKeyDown={(e) => {
@@ -812,271 +1480,173 @@ export default function SpaceBoard() {
             </div>
           </div>
 
-          {/* Search results chunks */}
-          <div className="space-y-4 max-h-[460px] overflow-y-auto pr-1">
+          <div className="space-y-4 max-h-[300px] overflow-y-auto pr-1 font-mono">
             <h4 className="text-[10px] font-mono text-slate-500 uppercase tracking-wider border-b border-slate-800 pb-1.5 flex justify-between items-center">
               <span>📚 检索结果 ({ragResults.length})</span>
-              {isSearchingRag && <span className="text-emerald-400 animate-pulse">CHROMA 检索中...</span>}
             </h4>
 
             {ragResults.length === 0 ? (
-              <div className="border border-dashed border-slate-800 p-8 text-center text-slate-500 font-mono text-xs">
-                {isSearchingRag ? 'ChromaDB 向量数据库运算中...' : '暂无检索结果，请尝试点击上方“快捷检索关键词”或输入语法问题查询。'}
+              <div className="border border-dashed border-slate-800 p-8 text-center text-slate-500 text-xs">
+                {isSearchingRag ? 'ChromaDB 运算中...' : '暂无检索内容，请键入问题或点击上方关键词！'}
               </div>
             ) : (
               ragResults.map((result, idx) => (
-                <div key={idx} className="border border-emerald-900/50 bg-slate-950/60 p-3 shadow-inner relative group">
+                <div key={idx} className="border border-emerald-900/50 bg-slate-950/60 p-3 shadow-inner">
                   <div className="flex justify-between items-start gap-2 mb-2">
-                    <span className="font-mono text-[10px] font-bold text-emerald-400 truncate max-w-[200px]" title={result.doc_title}>
+                    <span className="text-[10px] font-bold text-emerald-400 truncate max-w-[200px]" title={result.doc_title}>
                       📄 {result.doc_title.split('/').pop()}
                     </span>
-                    <PixelBadge variant="success" className="text-[9px] bg-emerald-950 border-emerald-800 text-emerald-400">
-                      匹配度: {(result.similarity_score * 100).toFixed(1)}%
+                    <PixelBadge variant="success" className="text-[9px] bg-emerald-950 text-emerald-400">
+                      {(result.similarity_score * 100).toFixed(1)}%
                     </PixelBadge>
                   </div>
-                  
-                  <p className="text-[11px] font-mono text-slate-300 leading-5 whitespace-pre-wrap select-text">
-                    {result.content_excerpt}
-                  </p>
+                  <p className="text-[11px] leading-5 text-slate-300 whitespace-pre-wrap select-text">{result.content_excerpt}</p>
                 </div>
               ))
             )}
           </div>
         </div>
-      ) : (
-        /* Tutorial Card on the right of the board when no bookcase is selected */
-        <PixelCard className="w-full lg:w-[400px] border-slate-700 bg-slate-900/60 self-stretch flex flex-col justify-between">
-          <div className="space-y-4">
-            <div className="border-b border-slate-800 pb-3">
-              <span className="font-mono text-[10px] font-bold text-amber-500">OFFICECRAFT WORKPLACE</span>
-              <h3 className="pixel-title text-base font-bold text-slate-200 mt-1">2D 数字孪生办公室</h3>
-            </div>
-            
-            <p className="font-mono text-xs leading-6 text-slate-400">
-              欢迎来到 OfficeCraft AI 的沉浸式空间孪生大厅！我们已将传统的控制台重构为可供操控的角色和 NPC 走动的 RPG 环境。
-            </p>
-
-            <div className="border border-slate-800 bg-slate-950 p-3 space-y-2">
-              <h4 className="font-mono text-[10px] font-bold text-slate-300">🏢 地图区域规划 (Digital Twin):</h4>
-              <ul className="font-mono text-[10px] text-slate-400 space-y-1.5 list-disc pl-4">
-                <li><span className="text-amber-300 font-bold">大厅接待区 (Lobby)</span>: 提供玩家初始状态。</li>
-                <li><span className="text-blue-300 font-bold">技术开发区 (Dev Bay)</span>: 包含技术主管工位及代码平台。</li>
-                <li><span className="text-indigo-300 font-bold">会议讨论区 (Meeting Room)</span>: 产品主管及重大业务规划领任务点。</li>
-                <li><span className="text-emerald-300 font-bold">物理资料库 (Archive Room)</span>: 放置 Pandas 等物理书架 RAG。</li>
-              </ul>
-            </div>
-
-            <div className="border border-amber-900/30 bg-amber-950/10 p-3 space-y-1">
-              <h4 className="font-mono text-[10px] font-bold text-amber-300">💡 空间光效联动 (Prompt-to-Light):</h4>
-              <p className="font-mono text-[10px] leading-5 text-slate-400">
-                当你领取主管任务后，办公室会自动进入工作状态的 <span className="text-cyan-400 font-bold">“幽蓝微光” (Quiet-Blue Theme)</span>。如果代码任务提交失败或出现异常，技术主管工位将触发闪烁的 <span className="text-red-400 font-bold">“红色预警” (Alert-Red Theme)</span>。任务圆满完成后将转入 <span className="text-amber-400 font-bold">“金色庆典” (Celebrate-Gold Theme)</span>。
-              </p>
-            </div>
-          </div>
-
-          <div className="border-t border-slate-800 pt-4 mt-4 flex flex-col gap-2">
-            <PixelButton
-              variant="secondary"
-              fullWidth
-              className="py-2 text-xs"
-              onClick={() => openBookcasePanel(BOOKCASES.pandas_library)}
-            >
-              📖 查阅 Pandas 物理书架
-            </PixelButton>
-            <PixelButton
-              variant="secondary"
-              fullWidth
-              className="py-2 text-xs"
-              onClick={() => openBookcasePanel(BOOKCASES.software_design_rules)}
-            >
-              📚 查阅软件开发规范
-            </PixelButton>
-          </div>
-        </PixelCard>
       )}
 
-      {/* ================== Multi-Agent SSE Meeting & Conflict Arbitration Modal ================== */}
+      {/* Multi-Agent standup meeting */}
       {isMeetingOpen && (
         <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md flex items-center justify-center z-50 p-4 font-mono select-none">
-          <div className="w-full max-w-4xl bg-slate-900 border-4 border-indigo-500 shadow-2xl p-6 relative flex flex-col gap-6 animate-slide-in-up rounded-lg">
+          <div className="w-full max-w-4xl bg-slate-900 border-4 border-indigo-500 shadow-2xl p-6 relative flex flex-col gap-6 rounded-lg animate-slide-in-up">
             
-            {/* Header */}
             <div className="border-b-4 border-indigo-950 pb-4 flex justify-between items-center">
               <div className="flex items-center gap-3">
                 <span className="text-2xl">{unresolvedConflict ? '⚡' : '🤝'}</span>
                 <div>
-                  <span className="text-[10px] font-bold text-indigo-400 tracking-wider">
-                    {unresolvedConflict ? 'TEAM CONFLICT RESOLUTION' : 'DAILY STANDUP SESSION'}
-                  </span>
-                  <h3 className="pixel-title text-base font-bold text-slate-100">
-                    {unresolvedConflict ? '团队决策斡旋与冲突仲裁' : '多智能体每日立会/晨会'}
-                  </h3>
+                  <span className="text-[10px] font-bold text-indigo-400 tracking-wider uppercase">DAILY STANDUP SESSION</span>
+                  <h3 className="pixel-title text-base font-bold text-slate-100">多智能体每日晨会圆桌</h3>
                 </div>
               </div>
               {!isMeetingStreaming && (
-                <button
-                  onClick={handleCloseMeeting}
-                  className="text-slate-500 hover:text-slate-200 text-xs border border-slate-700 bg-slate-950 px-2 py-1 hover:border-slate-400 transition-colors"
-                >
-                  [关闭 ESC]
-                </button>
+                <button onClick={handleCloseMeeting} className="text-slate-500 hover:text-slate-200 text-xs border border-slate-700 bg-slate-950 px-2 py-1">[关闭 Esc]</button>
               )}
             </div>
 
-            {/* Main Double-Column Dialogue Stream */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 min-h-[220px]">
-              
-              {/* Product Manager Amy Column */}
+              {/* PM Amy */}
               <div className="border-2 border-amber-800/60 bg-amber-950/10 p-4 flex flex-col gap-3 relative rounded shadow-md">
-                <div className="absolute top-2 right-4 text-[9px] text-amber-500 font-bold bg-amber-950 px-1.5 py-0.5 rounded border border-amber-900">
-                  PRODUCT MANAGER
-                </div>
+                <div className="absolute top-2 right-4 text-[9px] text-amber-500 font-bold bg-amber-950 px-1.5 py-0.5 rounded border border-amber-900">PRODUCT MANAGER</div>
                 <div className="flex items-center gap-3 border-b border-amber-900/40 pb-2">
-                  <div className="w-12 h-12 rounded bg-amber-900/30 border-2 border-amber-500 flex items-center justify-center text-3xl select-none shadow animate-pulse">
-                    👩‍💼
-                  </div>
+                  <div className="w-12 h-12 rounded bg-amber-900/30 border-2 border-amber-500 flex items-center justify-center text-3xl shadow animate-pulse">👩‍💼</div>
                   <div>
                     <h4 className="font-bold text-xs text-amber-400">PM Amy (艾米)</h4>
                     <span className="text-[9px] text-slate-400">口头禅: 闭环, 赋能, 快速发版</span>
                   </div>
                 </div>
-                <p className="text-xs leading-6 text-amber-100/95 whitespace-pre-wrap min-h-[100px] font-mono p-1">
-                  {meetingAmyText || (isMeetingStreaming && !meetingLingText ? <span className="text-amber-500/80 animate-pulse">发言准备中...</span> : <span className="text-slate-500 italic">静默聆听中...</span>)}
+                <p className="text-xs leading-6 text-amber-100/95 whitespace-pre-wrap min-h-[100px] p-1">
+                  {meetingAmyText || (isMeetingStreaming && !meetingLingText ? <span className="text-amber-500/80 animate-pulse">思考发言中...</span> : <span className="text-slate-500 italic">静默倾听中...</span>)}
                 </p>
               </div>
 
-              {/* Tech Lead Gao Ling Column */}
+              {/* Tech Lead Gao Ling */}
               <div className="border-2 border-purple-800/60 bg-purple-950/10 p-4 flex flex-col gap-3 relative rounded shadow-md">
-                <div className="absolute top-2 right-4 text-[9px] text-purple-500 font-bold bg-purple-950 px-1.5 py-0.5 rounded border border-purple-900">
-                  TECH LEAD
-                </div>
+                <div className="absolute top-2 right-4 text-[9px] text-purple-500 font-bold bg-purple-950 px-1.5 py-0.5 rounded border border-purple-900">TECH LEAD</div>
                 <div className="flex items-center gap-3 border-b border-purple-900/40 pb-2">
-                  <div className="w-12 h-12 rounded bg-purple-900/30 border-2 border-purple-500 flex items-center justify-center text-3xl select-none shadow">
-                    👩‍💻
-                  </div>
+                  <div className="w-12 h-12 rounded bg-purple-900/30 border-2 border-purple-500 flex items-center justify-center text-3xl shadow">👩‍💻</div>
                   <div>
                     <h4 className="font-bold text-xs text-purple-400">高凌 (Gao Ling)</h4>
                     <span className="text-[9px] text-slate-400">口头禅: SOLID, 单元测试, 架构规范</span>
                   </div>
                 </div>
-                <p className="text-xs leading-6 text-purple-100/95 whitespace-pre-wrap min-h-[100px] font-mono p-1">
+                <p className="text-xs leading-6 text-purple-100/95 whitespace-pre-wrap min-h-[100px] p-1">
                   {meetingLingText || (isMeetingStreaming && meetingAmyText ? <span className="text-purple-500/80 animate-pulse">思考技术反馈中...</span> : <span className="text-slate-500 italic">静默聆听中...</span>)}
                 </p>
               </div>
-
             </div>
 
-            {/* Arbitration Choice Buttons or Meeting Summary / Feedback Banner */}
             {unresolvedConflict && !arbitrationResponse && (
-              <div className="border-2 border-yellow-800/40 bg-slate-950 p-4 rounded flex flex-col gap-4 shadow-inner">
+              <div className="border-2 border-yellow-800/40 bg-slate-950 p-4 rounded flex flex-col gap-4">
                 <div className="border-b border-slate-800 pb-2">
-                  <h4 className="text-xs font-bold text-yellow-400">⚖️ 冲突斡旋：PM 与 技术主管陷入分歧</h4>
-                  <p className="text-[10px] text-slate-400 mt-1 leading-4">
-                    {unresolvedConflict.description}
-                  </p>
+                  <h4 className="text-xs font-bold text-yellow-400">⚖️ 冲突斡旋：产品线 Amy 极速迭代诉求与质量分歧</h4>
+                  <p className="text-[10px] text-slate-400 mt-1 leading-4">{unresolvedConflict.description}</p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  
-                  {/* Option 1: Speed */}
-                  <button
-                    onClick={() => handleArbitrateChoice('speed')}
-                    disabled={isMeetingStreaming}
-                    className="flex flex-col gap-1.5 p-3 border-2 border-amber-900/60 bg-amber-950/20 hover:border-amber-500 active:scale-95 transition-all text-left group rounded"
-                  >
+                  <button onClick={() => handleArbitrateChoice('speed')} disabled={isMeetingStreaming} className="flex flex-col gap-1.5 p-3 border-2 border-amber-900/60 bg-amber-950/20 hover:border-amber-500 active:scale-95 transition-all text-left group rounded">
                     <div className="flex justify-between items-center w-full">
-                      <span className="text-xs font-bold text-amber-400 group-hover:text-amber-300">🚀 速度优先 (Speed)</span>
-                      <PixelBadge variant="warning" className="text-[8px] bg-amber-950 text-amber-400 border-amber-900">
-                        +40 XP
-                      </PixelBadge>
+                      <span className="text-xs font-bold text-amber-400">🚀 速度优先 (Speed)</span>
+                      <PixelBadge variant="warning" className="text-[8px] bg-amber-950 text-amber-400">+40 XP</PixelBadge>
                     </div>
-                    <span className="text-[9px] text-slate-400 leading-4">PM 赞赏。牺牲技术债快速闭环发版，可能存在代码缺陷风险。</span>
+                    <span className="text-[9px] text-slate-400 leading-4">牺牲代码单元测试强行发版，增加生产质量漏洞风险。</span>
                   </button>
 
-                  {/* Option 2: Quality */}
-                  <button
-                    onClick={() => handleArbitrateChoice('quality')}
-                    disabled={isMeetingStreaming}
-                    className="flex flex-col gap-1.5 p-3 border-2 border-purple-900/60 bg-purple-950/20 hover:border-purple-500 active:scale-95 transition-all text-left group rounded"
-                  >
+                  <button onClick={() => handleArbitrateChoice('quality')} disabled={isMeetingStreaming} className="flex flex-col gap-1.5 p-3 border-2 border-purple-900/60 bg-purple-950/20 hover:border-purple-500 active:scale-95 transition-all text-left group rounded">
                     <div className="flex justify-between items-center w-full">
-                      <span className="text-xs font-bold text-purple-400 group-hover:text-purple-300">🛡️ 质量优先 (Quality)</span>
-                      <PixelBadge variant="success" className="text-[8px] bg-purple-950 text-purple-400 border-purple-900">
-                        +60 XP
-                      </PixelBadge>
+                      <span className="text-xs font-bold text-purple-400">🛡️ 质量优先 (Quality)</span>
+                      <PixelBadge variant="success" className="text-[8px] bg-purple-950 text-purple-400">+60 XP</PixelBadge>
                     </div>
-                    <span className="text-[9px] text-slate-400 leading-4">技术主管力挺。先补齐单元测试、精细化重构代码，延期发布。</span>
+                    <span className="text-[9px] text-slate-400 leading-4">先补齐完整的数据单元测试用例再发版，延期发布。</span>
                   </button>
 
-                  {/* Option 3: Balance */}
-                  <button
-                    onClick={() => handleArbitrateChoice('balance')}
-                    disabled={isMeetingStreaming}
-                    className="flex flex-col gap-1.5 p-3 border-2 border-indigo-900/60 bg-indigo-950/20 hover:border-indigo-500 active:scale-95 transition-all text-left group rounded"
-                  >
+                  <button onClick={() => handleArbitrateChoice('balance')} disabled={isMeetingStreaming} className="flex flex-col gap-1.5 p-3 border-2 border-indigo-900/60 bg-indigo-950/20 hover:border-indigo-500 active:scale-95 transition-all text-left group rounded">
                     <div className="flex justify-between items-center w-full">
-                      <span className="text-xs font-bold text-indigo-400 group-hover:text-indigo-300">⚖️ 渐进妥协 (Balance)</span>
-                      <PixelBadge variant="primary" className="text-[8px] bg-indigo-950 text-indigo-400 border-indigo-900">
-                        +50 XP
-                      </PixelBadge>
+                      <span className="text-xs font-bold text-indigo-400">⚖️ 渐进妥协 (Balance)</span>
+                      <PixelBadge variant="primary" className="text-[8px] bg-indigo-950 text-indigo-400">+50 XP</PixelBadge>
                     </div>
-                    <span className="text-[9px] text-slate-400 leading-4">折中方案。核心主流程跑通测试发布，非核心子模块灰度重构。</span>
+                    <span className="text-[9px] text-slate-400 leading-4">核心链路覆盖完整测试发布，子模块灰度开发。</span>
                   </button>
-
                 </div>
               </div>
             )}
 
-            {/* Resolution/Arbitration Success details card */}
             {arbitrationResponse && (
               <div className="border-2 border-emerald-800/40 bg-emerald-950/5 p-4 rounded flex flex-col gap-2 relative shadow-inner animate-fade-in">
                 <div className="absolute top-2 right-4 flex items-center gap-1.5">
                   <span className="text-xs">🏆</span>
                   <span className="text-xs font-bold text-emerald-400">+{arbitrationResponse.xp_gained} XP</span>
                 </div>
-                <h4 className="text-xs font-bold text-emerald-400">🎉 冲突斡旋决断已达成！</h4>
-                <p className="text-[10px] text-slate-300 leading-5">
-                  {arbitrationResponse.feedback}
-                </p>
-                {meetingPlayerText && (
-                  <div className="mt-2 p-2 border border-slate-800 bg-slate-950 text-[10px] text-slate-400 font-mono italic rounded">
-                    你的最终决策: &ldquo;{meetingPlayerText}&rdquo;
-                  </div>
-                )}
+                <h4 className="text-xs font-bold text-emerald-400">🎉 决策决议达成！</h4>
+                <p className="text-[10px] text-slate-300 leading-5">{arbitrationResponse.feedback}</p>
               </div>
             )}
 
-            {/* Standup Completed status */}
-            {!unresolvedConflict && meetingFinished && (
-              <div className="border-2 border-indigo-800/40 bg-indigo-950/10 p-4 rounded flex flex-col gap-1 shadow-inner animate-fade-in">
-                <h4 className="text-xs font-bold text-indigo-300">📈 每日晨会分享总结结束！</h4>
-                <p className="text-[10px] text-slate-400 leading-5">
-                  PM Amy 同技术主管高凌已经就今日迭代和底层技术重构策略取得了基本的对齐一致。加油，快回工位处理任务吧！
-                </p>
-              </div>
-            )}
-
-            {/* Footer Buttons */}
             <div className="flex justify-end border-t border-slate-800 pt-4 mt-2">
               {isMeetingStreaming ? (
-                <div className="flex items-center gap-2 text-xs text-indigo-400 font-mono">
-                  <span className="animate-spin text-sm">⏳</span>
-                  <span>智能体实时辩论对话生成中...</span>
+                <div className="flex items-center gap-2 text-xs text-indigo-400">
+                  <span className="animate-spin">⏳</span>
+                  <span>智能体辩论生成中...</span>
                 </div>
               ) : (
-                <PixelButton
-                  variant="primary"
-                  className="py-1.5 px-6 text-xs bg-indigo-600 border-indigo-500 hover:bg-indigo-500 text-slate-950"
-                  onClick={handleCloseMeeting}
-                >
-                  {unresolvedConflict ? '退出斡旋仲裁' : '确认并关闭晨会'}
-                </PixelButton>
+                <PixelButton variant="primary" className="py-1.5 px-6 text-xs" onClick={handleCloseMeeting}>确认并关闭晨会</PixelButton>
               )}
             </div>
-
           </div>
         </div>
       )}
+
+      {/* Community Post Dialog */}
+      {showCreatePost && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-slate-900 border-4 border-emerald-500 p-6 rounded-lg relative flex flex-col gap-4 font-mono select-none">
+            <button onClick={() => setShowPostDialog(false)} className="absolute top-4 right-4 text-slate-500 hover:text-slate-300 text-xs">[关闭 ×]</button>
+            <h3 className="font-bold text-emerald-400 text-sm">发布新问题工单</h3>
+            <div className="space-y-3">
+              <input
+                type="text"
+                placeholder="简明扼要写下你的技术疑问标题..."
+                value={newPostTitle}
+                onChange={(e) => setNewPostTitle(e.target.value)}
+                className="w-full pixel-input text-xs"
+              />
+              <textarea
+                placeholder="补充你的排查步骤，复现过程，以及期望获得怎样的协助..."
+                value={newPostContent}
+                onChange={(e) => setNewPostContent(e.target.value)}
+                className="w-full h-32 pixel-input text-xs resize-none"
+              />
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setShowPostDialog(false)} className="py-1.5 px-4 bg-slate-850 border border-slate-700 text-xs rounded text-slate-400">取消</button>
+                <button onClick={handleCreatePost} className="py-1.5 px-4 bg-emerald-600 border border-emerald-500 text-slate-950 font-bold text-xs rounded">确认发布</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

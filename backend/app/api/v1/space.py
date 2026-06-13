@@ -1,7 +1,7 @@
 """API endpoints for spatial state sync, movement, and bookcase RAG search."""
 
 import logging
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user_id
@@ -218,4 +218,116 @@ async def arbitrate_meeting_route(
   except Exception as e:
     logger.error("Arbitration failed: %s", e)
     raise HTTPException(status_code=500, detail="Arbitration processing failed.")
+
+
+class ConnectionManager:
+  """Manages active WebSockets connections and broadcasts real-time coordinate and typing states."""
+
+  def __init__(self):
+    self.active_connections: dict[str, WebSocket] = {}
+    self.player_states: dict[str, dict] = {}
+
+  async def connect(self, player_id: str, websocket: WebSocket):
+    await websocket.accept()
+    self.active_connections[player_id] = websocket
+    
+    if player_id not in self.player_states:
+      self.player_states[player_id] = {
+          "x": 0,
+          "y": 0,
+          "direction": "down",
+          "isWalking": False,
+          "isTyping": False
+      }
+
+    # 1. Send all OTHER players' states to the joining player
+    other_players = {
+        pid: state for pid, state in self.player_states.items() if pid != player_id
+    }
+    await websocket.send_json({
+        "type": "SYNC",
+        "players": other_players
+    })
+
+    # 2. Broadcast PLAYER_JOIN to everyone else
+    await self.broadcast({
+        "type": "PLAYER_JOIN",
+        "player_id": player_id,
+        "state": self.player_states[player_id]
+    }, exclude_player_id=player_id)
+
+  def disconnect(self, player_id: str):
+    if player_id in self.active_connections:
+      del self.active_connections[player_id]
+    if player_id in self.player_states:
+      del self.player_states[player_id]
+
+  async def broadcast(self, message: dict, exclude_player_id: str | None = None):
+    for player_id, connection in list(self.active_connections.items()):
+      if player_id == exclude_player_id:
+        continue
+      try:
+        await connection.send_json(message)
+      except Exception:
+        self.disconnect(player_id)
+
+  async def update_player_state(self, player_id: str, updates: dict):
+    if player_id in self.player_states:
+      self.player_states[player_id].update(updates)
+      if any(k in updates for k in ["x", "y", "direction", "isWalking"]):
+        await self.broadcast({
+            "type": "PLAYER_MOVE",
+            "player_id": player_id,
+            "x": self.player_states[player_id]["x"],
+            "y": self.player_states[player_id]["y"],
+            "direction": self.player_states[player_id]["direction"],
+            "isWalking": self.player_states[player_id]["isWalking"]
+        }, exclude_player_id=player_id)
+      elif "isTyping" in updates:
+        await self.broadcast({
+            "type": "PLAYER_TYPING",
+            "player_id": player_id,
+            "isTyping": self.player_states[player_id]["isTyping"]
+        }, exclude_player_id=player_id)
+
+
+manager = ConnectionManager()
+
+
+@router.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket, player_id: str | None = None):
+  """WebSocket handler for bidirectional multi-player state exchange."""
+  if not player_id:
+    await websocket.close(code=1008)
+    return
+
+  await manager.connect(player_id, websocket)
+  try:
+    while True:
+      data = await websocket.receive_json()
+      msg_type = data.get("type")
+      if msg_type == "MOVE":
+        await manager.update_player_state(player_id, {
+            "x": data.get("x", 0),
+            "y": data.get("y", 0),
+            "direction": data.get("direction", "down"),
+            "isWalking": data.get("isWalking", False)
+        })
+      elif msg_type == "TYPING":
+        await manager.update_player_state(player_id, {
+            "isTyping": data.get("isTyping", False)
+        })
+  except WebSocketDisconnect:
+    manager.disconnect(player_id)
+    await manager.broadcast({
+        "type": "PLAYER_LEAVE",
+        "player_id": player_id
+    })
+  except Exception as e:
+    logger.error("WebSocket exception for player %s: %s", player_id, e)
+    manager.disconnect(player_id)
+    await manager.broadcast({
+        "type": "PLAYER_LEAVE",
+        "player_id": player_id
+    })
 
