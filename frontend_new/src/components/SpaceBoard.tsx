@@ -1039,30 +1039,60 @@ export default function SpaceBoard() {
             <div className="absolute inset-0 bg-pixel-grid opacity-10 pointer-events-none z-5" />
 
             {/* Rug under Conference Table */}
-            <div className="absolute top-[160px] left-[512px] w-[128px] h-[128px] pixel-patterned-rug z-5 pointer-events-none" />
+            <div
+              className="absolute top-0 left-0 w-[128px] h-[128px] pixel-patterned-rug z-5 pointer-events-none"
+              style={{ transform: `translate3d(512px, 160px, 0)` }}
+            />
 
             {/* Green sofas */}
-            <div className="absolute top-[64px] left-[64px] w-[64px] h-[32px] pixel-green-sofa z-10 pointer-events-none" />
-            <div className="absolute top-[512px] left-[672px] w-[64px] h-[32px] pixel-green-sofa z-10 pointer-events-none" />
+            <div
+              className="absolute top-0 left-0 w-[64px] h-[32px] pixel-green-sofa z-10 pointer-events-none"
+              style={{ transform: `translate3d(64px, 64px, 0)` }}
+            />
+            <div
+              className="absolute top-0 left-0 w-[64px] h-[32px] pixel-green-sofa z-10 pointer-events-none"
+              style={{ transform: `translate3d(672px, 512px, 0)` }}
+            />
 
             {/* Decorative plants */}
-            <div className="absolute top-[32px] left-[32px] w-[32px] h-[32px] pixel-potted-plant z-10 pointer-events-none" />
-            <div className="absolute top-[32px] left-[736px] w-[32px] h-[32px] pixel-potted-plant z-10 pointer-events-none" />
+            <div
+              className="absolute top-0 left-0 w-[32px] h-[32px] pixel-potted-plant z-10 pointer-events-none"
+              style={{ transform: `translate3d(32px, 32px, 0)` }}
+            />
+            <div
+              className="absolute top-0 left-0 w-[32px] h-[32px] pixel-potted-plant z-10 pointer-events-none"
+              style={{ transform: `translate3d(736px, 32px, 0)` }}
+            />
 
             {/* Top-left boxes stack */}
-            <div className="absolute top-[224px] left-[32px] w-[48px] h-[48px] pixel-boxes z-10 pointer-events-none" />
-            <div className="absolute top-[288px] left-[32px] w-[32px] h-[32px] pixel-toolboxes z-10 pointer-events-none" />
+            <div
+              className="absolute top-0 left-0 w-[48px] h-[48px] pixel-boxes z-10 pointer-events-none"
+              style={{ transform: `translate3d(32px, 224px, 0)` }}
+            />
+            <div
+              className="absolute top-0 left-0 w-[32px] h-[32px] pixel-toolboxes z-10 pointer-events-none"
+              style={{ transform: `translate3d(32px, 288px, 0)` }}
+            />
 
             {/* Lobby reception desk */}
-            <div className="absolute top-[96px] left-[96px] w-[160px] h-[32px] pixel-reception-desk flex items-center justify-center font-bold text-[9px] tracking-tight whitespace-nowrap text-amber-200 z-10 border-2 border-amber-950/20 shadow-md">
+            <div
+              className="absolute top-0 left-0 w-[160px] h-[32px] pixel-reception-desk flex items-center justify-center font-bold text-[9px] tracking-tight whitespace-nowrap text-amber-200 z-10 border-2 border-amber-950/20 shadow-md"
+              style={{ transform: `translate3d(96px, 96px, 0)` }}
+            >
               💼 大厅前台接待处 (Lobby Desk)
             </div>
 
             {/* Dev workstations */}
-            <div className="absolute top-[448px] left-[64px] w-[224px] h-[32px] pixel-dev-desk flex items-center justify-center font-bold text-[9px] tracking-tight whitespace-nowrap text-slate-100 z-10">
+            <div
+              className="absolute top-0 left-0 w-[224px] h-[32px] pixel-dev-desk flex items-center justify-center font-bold text-[9px] tracking-tight whitespace-nowrap text-slate-100 z-10"
+              style={{ transform: `translate3d(64px, 448px, 0)` }}
+            >
               💻 研发工位 A ( G-5 Code Console)
             </div>
-            <div className="absolute top-[576px] left-[64px] w-[224px] h-[32px] pixel-dev-desk flex items-center justify-center font-bold text-[9px] tracking-tight whitespace-nowrap text-slate-100 z-10">
+            <div
+              className="absolute top-0 left-0 w-[224px] h-[32px] pixel-dev-desk flex items-center justify-center font-bold text-[9px] tracking-tight whitespace-nowrap text-slate-100 z-10"
+              style={{ transform: `translate3d(64px, 576px, 0)` }}
+            >
               💻 研发工位 B (Pandas Analytics Engine)
             </div>
 
@@ -1177,11 +1207,12 @@ export default function SpaceBoard() {
             {/* Conference roundtable */}
             <div
               onClick={startTeamMeetingModal}
-              className={`absolute top-[192px] left-[544px] w-[64px] h-[64px] pixel-meeting-table rounded flex flex-col items-center justify-center font-bold text-[10px] text-amber-100 z-15 transition-all duration-500 border-4 cursor-pointer hover:scale-105 active:scale-95 ${
+              className={`absolute top-0 left-0 w-[64px] h-[64px] pixel-meeting-table rounded flex flex-col items-center justify-center font-bold text-[10px] text-amber-100 z-15 transition-all duration-500 border-4 cursor-pointer hover:scale-105 active:scale-95 ${
                 unresolvedConflict
                   ? 'border-yellow-400 shadow-[0_0_25px_rgba(234,179,8,0.7)] animate-pulse'
                   : 'border-[#513123] hover:border-[#cf8754]'
               }`}
+              style={{ transform: `translate3d(544px, 192px, 0)` }}
             >
               <span className="text-lg">{unresolvedConflict ? '⚠️' : '🪴'}</span>
               <span className="text-[8px] font-mono tracking-wide uppercase">晨会圆桌</span>
