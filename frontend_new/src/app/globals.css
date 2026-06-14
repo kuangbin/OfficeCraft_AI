@@ -601,6 +601,22 @@ a {
   filter: drop-shadow(0 3px 5px rgba(0,0,0,0.4));
 }
 
+/* High-fidelity retro classroom/co-op whiteboard */
+.pixel-whiteboard {
+  background:
+    /* Red and blue marker lines simulated on board */
+    linear-gradient(90deg, transparent 4px, #3b82f6 4px, #3b82f6 14px, transparent 14px) 6px 12px / 16px 2px no-repeat,
+    linear-gradient(90deg, transparent 6px, #ef4444 6px, #ef4444 18px, transparent 18px) 8px 16px / 20px 2px no-repeat,
+    /* Clean white writing surface */
+    #f8fafc;
+  border: 3px solid #64748b; /* Silver/Slate aluminum frame */
+  border-bottom: 5px solid #475569; /* Thicker tray on bottom for markers */
+  box-shadow: 
+    0 4px 6px rgba(0,0,0,0.3),
+    inset 0 0 4px rgba(0,0,0,0.1);
+  border-radius: 2px;
+}
+
 /* Cardboard storage boxes from left image floor */
 .pixel-boxes {
   background:

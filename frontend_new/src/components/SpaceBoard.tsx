@@ -1765,6 +1765,44 @@ export default function SpaceBoard() {
               </div>
             ))}
 
+            {/* Co-Op Whiteboard */}
+            <div
+              onClick={() => {
+                if (isNearCoopWhiteboard) {
+                  openCoopWhiteboard();
+                  setCurrentTerminalStationId('station_whiteboard');
+                  acquireStationLock('station_whiteboard');
+                }
+              }}
+              className="absolute top-0 left-0 w-[32px] h-[32px] pixel-whiteboard hover:scale-105 active:scale-95 transition-all duration-100 flex flex-col items-center justify-between p-[2px] cursor-pointer z-20 group"
+              style={{ transform: `translate3d(${15 * 32}px, ${5 * 32}px, 0)` }}
+              title="点击打开协作白板与代码评审 (Co-Op Whiteboard)"
+            >
+              {/* Floating Proximity Prompt Bubble */}
+              {isNearCoopWhiteboard && (
+                <div className="absolute bottom-8 flex flex-col items-center animate-bounce z-30">
+                  <div className="bg-slate-900/95 border-2 border-violet-500 text-[9px] font-bold text-violet-300 font-mono py-1 px-1.5 rounded whitespace-nowrap shadow-md">
+                    [Space] 协作白板
+                  </div>
+                  <div className="w-1.5 h-1.5 bg-violet-500 rotate-45 -mt-1 border-r border-b border-violet-500" />
+                </div>
+              )}
+              
+              {/* Whiteboard content drawings */}
+              <div className="w-full h-full flex flex-col justify-between p-1 select-none pointer-events-none">
+                <div className="text-[7px] text-violet-700/80 font-bold font-mono text-center leading-none tracking-tighter">CO-OP</div>
+                <div className="flex justify-center gap-1">
+                  <div className="w-1.5 h-1 bg-violet-500/70 rounded-full animate-pulse" />
+                  <div className="w-2 h-1 bg-cyan-500/70 rounded-full" />
+                </div>
+              </div>
+
+              {/* Hover Tooltip */}
+              <div className="absolute top-8 scale-0 group-hover:scale-100 transition-all bg-slate-900/90 border border-slate-700 text-[9px] text-slate-300 py-0.5 px-2 rounded whitespace-nowrap pointer-events-none z-30">
+                👥 协作白板 (Co-Op Whiteboard)
+              </div>
+            </div>
+
             {/* Interactive Skill Matrix Server Terminal */}
             <div
               onClick={() => activeAnomaly ? openOverlay('recovery') : openOverlay('skills')}
