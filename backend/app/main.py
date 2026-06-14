@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, text
 
-from app.api.v1 import agent, careers, missions, user, space
+from app.api.v1 import agent, careers, missions, user, space, sandbox
 from app.core.config import settings
 from app.core.logging_config import build_log_config, setup_logging
 from app.core.paths import generated_dir
@@ -129,6 +129,12 @@ app.include_router(
     prefix="/api/v1/space",
     tags=["Spatial State & Navigation"],
 )
+app.include_router(
+    sandbox.router,
+    prefix="/api/v1/sandbox",
+    tags=["Sandbox Compiler"],
+)
+
 
 
 # Serve generated mission artifacts as static downloads. The directory is

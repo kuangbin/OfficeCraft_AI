@@ -1,7 +1,7 @@
 import { careerPlaybooks, mergeCareerMissions, missions } from '@/data';
 import { MVP_MISSION } from '@/data/mvpMission';
 import { Mission } from '@/types';
-import { AbortError, api, EvaluationResult, GeneratedMission } from './apiClient';
+import { AbortError, api, EvaluationResult, GeneratedMission, SandboxCompileResponse } from './apiClient';
 import {
   CAREER_API_CONFIGS,
   mapBackendMissionToMission,
@@ -159,5 +159,9 @@ export const missionService = {
     const result = await api.evaluateSubmission(missionId, submissionText);
     cacheEvaluationResult(missionId, result);
     return result;
+  },
+
+  compileSandboxCode: async (code: string, language: string, missionId?: string): Promise<SandboxCompileResponse> => {
+    return api.compileSandboxCode(code, language, missionId);
   },
 };

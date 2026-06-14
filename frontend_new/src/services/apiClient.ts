@@ -461,6 +461,14 @@ export const api = {
     });
   },
 
+  async compileSandboxCode(code: string, language: string, missionId?: string, signal?: AbortSignal): Promise<SandboxCompileResponse> {
+    return request<SandboxCompileResponse>('/api/v1/sandbox/compile', {
+      method: 'POST',
+      body: JSON.stringify({ code, language, mission_id: missionId }),
+      signal,
+    });
+  },
+
   async submitCoopCode(title: string, codeContent: string, language: string, signal?: AbortSignal): Promise<CoopReview> {
     return request<CoopReview>('/api/v1/space/coop/submit', {
       method: 'POST',
@@ -733,6 +741,26 @@ export interface CoopActionResponse {
   status: string;
   message: string;
   xp_gained: number;
+}
+
+export interface SandboxCompileResponse {
+  status: string;
+  feedback: string;
+  logs: string[];
+  diagnostics: {
+    syntax_valid: boolean;
+    complexity: string;
+    functions: string[];
+    decorators: string[];
+    has_try_except: boolean;
+    has_rollback: boolean;
+    has_circuit_breaker: boolean;
+    has_fallback_defined: boolean;
+    has_pandas_groupby: boolean;
+    has_pandas_fillna: boolean;
+    sandbox_success: boolean;
+    [key: string]: any;
+  };
 }
 
 

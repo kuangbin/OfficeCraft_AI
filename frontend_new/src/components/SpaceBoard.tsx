@@ -911,63 +911,50 @@ export default function SpaceBoard() {
     syncFromBackend();
   };
 
-  // Sandbox Code compile & tests simulator
+  // Sandbox Code compile & tests service caller
   const handleCompileCode = async () => {
     if (isCompiling) return;
     setIsCompiling(true);
     setTestResult('running');
     setScreenShake(true);
-    setCompileLog(['⏳ [0.0s] Booting virtual Sandbox Pandas runtime container...']);
+    setCompileLog(['⏳ [0.0s] Booting virtual Sandbox container...']);
 
     // Play compile sound loop and vibrate
     audioManager.playThemeTransition('alert-red');
 
-    setTimeout(() => {
-      setCompileLog((prev) => [...prev, '📦 [0.4s] Mounting system core libraries: pandas, numpy, scikit-learn...']);
-      audioManager.playTypewriter();
-    }, 450);
-
-    setTimeout(() => {
-      setCompileLog((prev) => [...prev, '🔬 [0.9s] Injecting task evaluation schema: pandas_active_days_validation_suite...']);
-      audioManager.playTypewriter();
-    }, 900);
-
-    setTimeout(() => {
-      setCompileLog((prev) => [...prev, '⚙️ [1.3s] Executing Pandas DataFrame query assertions...']);
-      audioManager.playTypewriter();
-    }, 1300);
-
-    setTimeout(() => {
-      setScreenShake(false);
+    try {
+      const language = (sandboxCode.toLowerCase().includes('create index') || sandboxCode.toLowerCase().includes('select ')) ? 'sql' : 'python';
       
-      // Analyze code for groupby/fillna
-      const hasGroupby = sandboxCode.includes('groupby');
-      const hasFillna = sandboxCode.includes('fillna');
+      const res = await missionService.compileSandboxCode(
+        sandboxCode,
+        language,
+        localActiveMission?.mission_id
+      );
 
-      if (hasGroupby && hasFillna) {
-        setCompileLog((prev) => [
-          ...prev,
-          '✓ [1.6s] Test assert_fillna_completions: PASSED',
-          '✓ [1.8s] Test assert_groupby_aggregates: PASSED',
-          '🎉 [2.0s] SUCCESS: All 3/3 testing constraints compiled with absolute success!',
-        ]);
+      setScreenShake(false);
+      setCompileLog(res.logs);
+
+      if (res.status === 'success') {
         setTestResult('success');
         setAmbientTheme('celebrate-gold');
         audioManager.playThemeTransition('celebrate-gold');
       } else {
-        setCompileLog((prev) => [
-          ...prev,
-          '❌ [1.6s] Test assert_fillna_completions: FAILED',
-          `🚨 Syntax Error: pandas dataframe columns contain unresolved NaN values.`,
-          `AttributeError: 'DataFrame' object has no attribute 'fillna' or 'groupby'.`,
-          '💔 [2.0s] COMPILATION FAILED: test suites failed because of syntax anomalies.',
-        ]);
         setTestResult('fail');
         setAmbientTheme('alert-red');
         audioManager.playThemeTransition('alert-red');
       }
+    } catch (err) {
+      setScreenShake(false);
+      setTestResult('fail');
+      setAmbientTheme('alert-red');
+      audioManager.playThemeTransition('alert-red');
+      setCompileLog([
+        '🚨 Connection timed out or server compiler service is offline.',
+        '💔 COMPILATION FAILED: unable to establish connection with the sandboxed evaluator.'
+      ]);
+    } finally {
       setIsCompiling(false);
-    }, 2000);
+    }
   };
 
   // Submit to AI evaluation

@@ -8,6 +8,7 @@ from app.api.deps import get_current_user_id
 from app.db.session import get_db
 from app.models import orm as models, schemas
 from app.services import rag
+from app.services.compiler import compile_and_diagnose
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -333,58 +334,49 @@ async def resolve_anomaly_endpoint(
         xp_gained=0,
     )
 
-  script = request.script.lower()
+  language = "python"
+  if user.active_anomaly == "db_cpu_overload" and "create index" in request.script.lower():
+    language = "sql"
 
-  if user.active_anomaly == "service_breaker_trip":
-    # Keyword evaluation for distributed circuit breaker
-    is_circuit_breaker = "circuitbreaker" in script or "breaker" in script
-    is_fallback = "fallback" in script
-    is_open = "open" in script
-    is_closed = "closed" in script
-
-    is_breaker_resolved = is_circuit_breaker and is_fallback and is_open and is_closed
-
-    if is_breaker_resolved:
+  res = compile_and_diagnose(request.script, language, user.active_anomaly)
+  status = res["status"]
+  
+  if status == "success":
+    if user.active_anomaly == "service_breaker_trip":
       feedback = (
           "✓ 修复成功！已检测到分布式熔断器（CircuitBreaker）及 fallback 回退方法定义，"
           "并正确包含熔断器 open 与 closed 状态逻辑！微服务 B 保护链条重新闭合，系统恢复正常，"
           "CPU 负载降回 8%！"
       )
-      status = "success"
       xp_gained = 80
     else:
+      if language == "sql":
+        feedback = (
+            "✓ 优化成功！已检测到 SQL 索引创建语句。成功为高频查询列创建索引，"
+            "查询检索复杂度从 O(N) 降至 O(log N)，彻底消除全表扫描，CPU 负载降回 12%！"
+        )
+      else:
+        feedback = (
+            "✓ 修复成功！已检测到 Python 异常捕获块。成功捕获连接超时并调用了 "
+            "db.rollback() 释放死锁连接，连接池耗尽危机完全解除，CPU 负载降回 15%！"
+        )
+      xp_gained = 50
+  else:
+    xp_gained = 0
+    if user.active_anomaly == "service_breaker_trip":
       feedback = (
           "❌ 诊断失败！未检测到完整的分布式熔断器 (circuitbreaker/breaker)、"
           "回退方法 (fallback) 以及状态转换声明 (open, closed)。故障依然存在！"
       )
-      status = "fail"
-      xp_gained = 0
-  else:
-    # Existing db_cpu_overload logic
-    is_sql_index = "create index" in script and "on" in script
-    is_python_exception = "try" in script and "except" in script
-
-    if is_sql_index:
-      feedback = (
-          "✓ 优化成功！已检测到 SQL 索引创建语句。成功为高频查询列创建索引，"
-          "查询检索复杂度从 O(N) 降至 O(log N)，彻底消除全表扫描，CPU 负载降回 12%！"
-      )
-      status = "success"
-      xp_gained = 50
-    elif is_python_exception:
-      feedback = (
-          "✓ 修复成功！已检测到 Python 异常捕获块。成功捕获连接超时并调用了 "
-          "db.rollback() 释放死锁连接，连接池耗尽危机完全解除，CPU 负载降回 15%！"
-      )
-      status = "success"
-      xp_gained = 50
     else:
       feedback = (
           "❌ 诊断失败！未检测到有效的异常捕获块 (try-except) 语法，"
           "或未检测到针对数据大表进行索引创建的优化 (CREATE INDEX ... ON)。故障依然存在！"
       )
-      status = "fail"
-      xp_gained = 0
+
+  # Attach compiler diagnostics and standard output logs to user feedback for extremely detailed experience
+  compile_logs_str = "\n".join(res.get("logs", []))
+  feedback = f"{feedback}\n\n[编译诊断控制台 stdout]:\n{compile_logs_str}"
 
   if status == "success":
     user.active_anomaly = None

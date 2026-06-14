@@ -24,6 +24,8 @@ DATA_ANALYST_SKILLS: frozenset[str] = frozenset({
     "skill_dashboard_design",
     "skill_drill_down_analysis",
     "skill_root_cause_analysis",
+    "skill_ab_test_design",
+    "skill_strategy_proposal",
 })
 
 SOFTWARE_ENGINEER_SKILLS: frozenset[str] = frozenset({

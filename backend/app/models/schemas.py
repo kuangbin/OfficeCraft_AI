@@ -369,6 +369,24 @@ class SpaceAnomalyResolveResponse(BaseModel):
   xp_gained: int
 
 
+class SandboxCompileRequest(BaseModel):
+  """Request schema for sandboxed compilation."""
+
+  code: str
+  language: str
+  mission_id: str | None = None
+
+
+class SandboxCompileResponse(BaseModel):
+  """Response schema for sandbox compilation outputs."""
+
+  status: str
+  feedback: str
+  logs: list[str]
+  diagnostics: dict
+
+
+
 class CoopSubmitRequest(BaseModel):
   """Request schema for submitting code for review."""
 
