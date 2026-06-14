@@ -241,14 +241,29 @@ npm run dev
 * *判断规则*：提交的代码中必须**同时包含** `circuitbreaker` (或 `breaker`)、`fallback`、`open`、`closed` 四个关键英文单词（不区分大小写，可用作注释或代码行）。
 * *推荐提交（可以直接复制）*：
   ```python
-  # 引入分布式熔断机制（circuitbreaker）保护高可用微服务
-  # 当错误率过高时，熔断器从 CLOSED 状态切换为 OPEN 状态
-  # 并在 OPEN 期间自动调用 fallback 备用降级方法
-  @circuitbreaker(timeout=3, fallback=my_fallback_handler)
-  def call_service_b():
-      # 熔断正常闭合状态为 CLOSED
-      # 发生级联雪崩脱扣状态为 OPEN
-      pass
+  # 1. 声明熔断器状态变量（避免使用 class 语句以绕过沙箱限制）
+  open_state = "open"
+  closed_state = "closed"
+
+  # 2. 声明回退降级函数（必须在 request_ms_b_service 之前定义，否则装饰器会报 NameError）
+  def handle_timeout_fallback(payload=None):
+      return {
+          "status": "fallback_offline",
+          "data": "Local Cache Backup Data"
+      }
+
+  # 3. 声明核心处理函数（必须命名为 request_ms_b_service）并正确配置装饰器
+  @circuitbreaker(timeout=3, fallback=handle_timeout_fallback)
+  def request_ms_b_service(payload):
+      # 当微服务 B 熔断器处于开启状态，直接抛出异常触发熔断自愈
+      if service_b.is_open():
+          raise Exception("Circuit Breaker is Open")
+          
+      try:
+          return service_b.call(payload)
+      except Exception as e:
+          # 异常捕获并触发 local fallback 降级
+          return handle_timeout_fallback(payload)
   ```
 
 点击屏幕下方的 **`⚡ 运行重构检查`**，通过校验后：

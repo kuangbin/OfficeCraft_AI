@@ -213,6 +213,7 @@ export default function SpaceBoard() {
 
   // Co-Op whiteboard and review state variables
   const [whiteboardTab, setWhiteboardTab] = useState<'reviews' | 'quests'>('reviews');
+  const [questPage, setQuestPage] = useState<number>(1);
   const [selectedReview, setSelectedReview] = useState<CoopReview | null>(null);
   const [coopFeedback, setCoopFeedback] = useState('');
   const [isReviewActionRunning, setIsReviewActionRunning] = useState(false);
@@ -3247,66 +3248,144 @@ export default function SpaceBoard() {
                     )}
                   </div>
                 ) : (
-                  <div className="flex flex-col gap-2.5">
-                    <span className="text-[9px] font-bold text-slate-500 tracking-wider uppercase">共享协作副本 (ACTIVE TEAM QUESTS)</span>
-                    
-                    <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-2">
-                      <div className="flex justify-between items-center">
-                        <span className="text-[9px] font-bold text-red-400 bg-red-950/50 border border-red-900/60 px-1.5 py-0.5 rounded">P0 高能事件</span>
-                        <span className="text-[9px] text-red-400 animate-pulse">● 进行中</span>
-                      </div>
-                      <h4 className="text-xs font-bold text-slate-200">物理数据库100%满载排修</h4>
-                      <p className="text-[10px] text-slate-400 leading-relaxed">
-                        由于连接并发溢出导致服务器卡死。需要两名开发人员：一名负责在 (18, 15) 核心终端执行索引重建，另一名在协作白板做最终代码同业复核。
-                      </p>
-                      <div className="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden border border-slate-800">
-                        <div className="bg-red-500 h-full w-[45%]" />
-                      </div>
-                      <div className="flex justify-between text-[9px] text-slate-500">
-                        <span>进度: 45%</span>
-                        <span>奖励: 150 XP</span>
-                      </div>
+                  <div className="flex flex-col gap-2.5 flex-1 justify-between min-h-0">
+                    <div className="flex flex-col gap-2.5 overflow-y-auto pr-1">
+                      <span className="text-[9px] font-bold text-slate-500 tracking-wider uppercase">共享协作副本 (ACTIVE TEAM QUESTS)</span>
+                      
+                      {questPage === 1 ? (
+                        <>
+                          <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-2">
+                            <div className="flex justify-between items-center">
+                              <span className="text-[9px] font-bold text-red-400 bg-red-950/50 border border-red-900/60 px-1.5 py-0.5 rounded">P0 高能事件</span>
+                              <span className="text-[9px] text-red-400 animate-pulse">● 进行中</span>
+                            </div>
+                            <h4 className="text-xs font-bold text-slate-200">物理数据库100%满载排修</h4>
+                            <p className="text-[10px] text-slate-400 leading-relaxed">
+                              由于连接并发溢出导致服务器卡死。需要两名开发人员：一名负责在 (18, 15) 核心终端执行索引重建，另一名在协作白板做最终代码同业复核。
+                            </p>
+                            <div className="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden border border-slate-800">
+                              <div className="bg-red-500 h-full w-[45%]" />
+                            </div>
+                            <div className="flex justify-between text-[9px] text-slate-500">
+                              <span>进度: 45%</span>
+                              <span>奖励: 150 XP</span>
+                            </div>
+                          </div>
+
+                          <div className={`bg-slate-900/80 border ${activeAnomaly?.anomaly_id === 'service_breaker_trip' ? 'border-orange-500/80 shadow-[0_0_12px_rgba(249,115,22,0.15)]' : 'border-slate-800 hover:border-violet-500/60'} rounded-lg p-3 space-y-2 transition-all`}>
+                            <div className="flex justify-between items-center">
+                              <span className="text-[9px] font-bold text-orange-400 bg-orange-950/50 border border-orange-900/60 px-1.5 py-0.5 rounded">P1 架构重构</span>
+                              {activeAnomaly?.anomaly_id === 'service_breaker_trip' ? (
+                                <span className="text-[9px] text-orange-400 animate-pulse font-bold">● 战役已激活</span>
+                              ) : (
+                                <span className="text-[9px] text-emerald-400 font-bold">● 可接取</span>
+                              )}
+                            </div>
+                            <h4 className="text-xs font-bold text-slate-100">分布式熔断器改造</h4>
+                            <p className="text-[10px] text-slate-300 leading-relaxed">
+                              当单点节点心跳超时，协同编写异常熔断并自愈的熔断降级中间件，提升核心服务稳定性。
+                            </p>
+
+                            {activeAnomaly?.anomaly_id === 'service_breaker_trip' ? (
+                              <div className="bg-orange-950/40 border border-orange-500/30 p-2 rounded text-[10px] text-orange-300 leading-normal">
+                                ⚠️ 紧急事故：微服务 B 心跳超时已触发分布式脱扣熔断！请前往 Archive Room (18, 15) 进行应急抢修。
+                              </div>
+                            ) : (
+                              <button
+                                onClick={async () => {
+                                  try {
+                                    await triggerAnomaly('service_breaker_trip');
+                                    alert('⚠️ 战役已激活：微服务 B 心跳超时，分布式系统已触发脱扣熔断保护！请立刻前往 Archive Room (18, 15) 重组核心保护链！');
+                                    closeCoopWhiteboard();
+                                  } catch (e) {
+                                    alert('激活战役失败，请检查网络/后台');
+                                  }
+                                }}
+                                className="w-full py-1.5 bg-orange-600 hover:bg-orange-500 text-slate-950 hover:text-slate-100 text-[11px] font-bold rounded transition-colors flex items-center justify-center gap-1"
+                              >
+                                🎯 激活团队战役
+                              </button>
+                            )}
+
+                            <div className="flex justify-between text-[9px] text-slate-500 pt-1 border-t border-slate-900">
+                              <span>奖励: +80 XP (协同红利)</span>
+                              <span>难易度: ★★★★☆</span>
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <div className={`bg-slate-900/80 border ${activeAnomaly?.anomaly_id === 'network_partition' ? 'border-cyan-500/80 shadow-[0_0_12px_rgba(6,182,212,0.15)]' : 'border-slate-800 hover:border-violet-500/60'} rounded-lg p-3 space-y-2 transition-all`}>
+                          <div className="flex justify-between items-center">
+                            <span className="text-[9px] font-bold text-cyan-400 bg-cyan-950/50 border border-cyan-900/60 px-1.5 py-0.5 rounded">P2 分布式脑裂</span>
+                            {activeAnomaly?.anomaly_id === 'network_partition' ? (
+                              <span className="text-[9px] text-cyan-400 animate-pulse font-bold">● 战役已激活</span>
+                            ) : (
+                              <span className="text-[9px] text-emerald-400 font-bold">● 可接取</span>
+                            )}
+                          </div>
+                          <h4 className="text-xs font-bold text-slate-100">分布式网络分区故障容灾</h4>
+                          <p className="text-[10px] text-slate-300 leading-relaxed">
+                            当网关主机与子代理工位之间发生分区脑裂阻断，需要多节点协同配置双端共识路由，以解开分布式环境阻断。
+                          </p>
+
+                          {activeAnomaly?.anomaly_id === 'network_partition' ? (
+                            <div className="bg-cyan-950/40 border border-cyan-500/30 p-2 rounded text-[10px] text-cyan-300 leading-normal">
+                              ⚠️ 脑裂事故：双端网络发生分区阻断！请前往主机柜 (18, 15) 与工位 B (11, 17) 进行应急双端共识重构。
+                            </div>
+                          ) : (
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await triggerAnomaly('network_partition');
+                                  alert('⚠️ 战役已激活：分布式物理网络发生分区脑裂！请前往主机柜 (18, 15) 与工位 B (11, 17) 协同配置双端路由以解除脑裂阻断！');
+                                  closeCoopWhiteboard();
+                                } catch (e) {
+                                  alert('激活战役失败，请检查网络/后台');
+                                }
+                              }}
+                              className="w-full py-1.5 bg-cyan-600 hover:bg-cyan-500 text-slate-950 hover:text-slate-100 text-[11px] font-bold rounded transition-colors flex items-center justify-center gap-1"
+                            >
+                              🎯 激活团队战役
+                            </button>
+                          )}
+
+                          <div className="flex justify-between text-[9px] text-slate-500 pt-1 border-t border-slate-900">
+                            <span>奖励: +150 XP (协同红利)</span>
+                            <span>难易度: ★★★★★</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
-                    <div className={`bg-slate-900/80 border ${activeAnomaly?.anomaly_id === 'service_breaker_trip' ? 'border-orange-500/80 shadow-[0_0_12px_rgba(249,115,22,0.15)]' : 'border-slate-800 hover:border-violet-500/60'} rounded-lg p-3 space-y-2 transition-all`}>
-                      <div className="flex justify-between items-center">
-                        <span className="text-[9px] font-bold text-orange-400 bg-orange-950/50 border border-orange-900/60 px-1.5 py-0.5 rounded">P1 架构重构</span>
-                        {activeAnomaly?.anomaly_id === 'service_breaker_trip' ? (
-                          <span className="text-[9px] text-orange-400 animate-pulse font-bold">● 战役已激活</span>
-                        ) : (
-                          <span className="text-[9px] text-emerald-400 font-bold">● 可接取</span>
-                        )}
-                      </div>
-                      <h4 className="text-xs font-bold text-slate-100">分布式熔断器改造</h4>
-                      <p className="text-[10px] text-slate-300 leading-relaxed">
-                        当单点节点心跳超时，协同编写异常熔断并自愈的熔断降级中间件，提升核心服务稳定性。
-                      </p>
+                    {/* Pagination Controls */}
+                    <div className="flex justify-between items-center bg-slate-950 border border-slate-800 rounded-md p-1 mt-2 shrink-0">
+                      <button
+                        onClick={() => setQuestPage(1)}
+                        disabled={questPage === 1}
+                        className={`px-3 py-1 text-[10px] font-bold rounded border transition-colors ${
+                          questPage === 1
+                            ? 'border-slate-900/50 text-slate-700 bg-transparent cursor-not-allowed'
+                            : 'border-slate-800 text-slate-400 hover:border-violet-500/50 hover:text-violet-300'
+                        }`}
+                      >
+                        ◀ 上一页
+                      </button>
 
-                      {activeAnomaly?.anomaly_id === 'service_breaker_trip' ? (
-                        <div className="bg-orange-950/40 border border-orange-500/30 p-2 rounded text-[10px] text-orange-300 leading-normal">
-                          ⚠️ 紧急事故：微服务 B 心跳超时已触发分布式脱扣熔断！请前往 Archive Room (18, 15) 进行应急抢修。
-                        </div>
-                      ) : (
-                        <button
-                          onClick={async () => {
-                            try {
-                              await triggerAnomaly('service_breaker_trip');
-                              alert('⚠️ 战役已激活：微服务 B 心跳超时，分布式系统已触发脱扣熔断保护！请立刻前往 Archive Room (18, 15) 重组核心保护链！');
-                              closeCoopWhiteboard();
-                            } catch (e) {
-                              alert('激活战役失败，请检查网络/后台');
-                            }
-                          }}
-                          className="w-full py-1.5 bg-orange-600 hover:bg-orange-500 text-slate-950 hover:text-slate-100 text-[11px] font-bold rounded transition-colors flex items-center justify-center gap-1"
-                        >
-                          🎯 激活团队战役
-                        </button>
-                      )}
+                      <span className="text-[10px] font-bold text-violet-400 font-mono">
+                        第 {questPage} / 2 页
+                      </span>
 
-                      <div className="flex justify-between text-[9px] text-slate-500 pt-1 border-t border-slate-900">
-                        <span>奖励: +80 XP (协同红利)</span>
-                        <span>难易度: ★★★★☆</span>
-                      </div>
+                      <button
+                        onClick={() => setQuestPage(2)}
+                        disabled={questPage === 2}
+                        className={`px-3 py-1 text-[10px] font-bold rounded border transition-colors ${
+                          questPage === 2
+                            ? 'border-slate-900/50 text-slate-700 bg-transparent cursor-not-allowed'
+                            : 'border-slate-800 text-slate-400 hover:border-violet-500/50 hover:text-violet-300'
+                        }`}
+                      >
+                        下一页 ▶
+                      </button>
                     </div>
                   </div>
                 )}

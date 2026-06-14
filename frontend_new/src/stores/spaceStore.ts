@@ -347,9 +347,10 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
     try {
       const anomaly = await api.triggerSpaceAnomaly(anomalyId);
       const isBreaker = anomaly.anomaly_id === 'service_breaker_trip';
+      const isPartition = anomaly.anomaly_id === 'network_partition';
       set({
         activeAnomaly: anomaly,
-        ambientTheme: isBreaker ? 'alert-orange' : 'alert-red',
+        ambientTheme: isBreaker ? 'alert-orange' : (isPartition ? 'alert-cyan' : 'alert-red'),
       });
       if (isBreaker) {
         audioManager.playBreakerTrip();
