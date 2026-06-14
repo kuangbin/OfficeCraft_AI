@@ -359,6 +359,7 @@ class SpaceAnomalyResolveRequest(BaseModel):
   """Request schema for anomaly resolution."""
 
   script: str
+  station_id: str | None = None
 
 
 class SpaceAnomalyResolveResponse(BaseModel):

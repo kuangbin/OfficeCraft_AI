@@ -9,6 +9,8 @@ from app.db.session import get_db
 from app.models import orm as models, schemas
 from app.services import rag
 from app.services.compiler import compile_and_diagnose
+import asyncio
+from app.services.lock_manager import LockManager
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -77,6 +79,8 @@ async def get_space_state(
   if user.active_anomaly and user.anomaly_status == "active":
     if user.active_anomaly == "service_breaker_trip":
       ambient_theme = "alert-orange"
+    elif user.active_anomaly == "network_partition":
+      ambient_theme = "alert-cyan"
     else:
       ambient_theme = "alert-red"
 
@@ -87,6 +91,14 @@ async def get_space_state(
           anomaly_id=user.active_anomaly,
           title="分布式微服务 B 熔断器异常脱扣",
           description="微服务 B 的底层网关接口响应大幅超时，导致调用队列严重阻塞，触发高可用分布式熔断器异常脱扣，部分依赖服务陷入级联雪崩！",
+          cpu_load=user.anomaly_cpu,
+          status=user.anomaly_status,
+      )
+    elif user.active_anomaly == "network_partition":
+      active_anomaly = schemas.SpaceAnomaly(
+          anomaly_id=user.active_anomaly,
+          title="分布式网络分区隔离大故障",
+          description="由于核心网关异常脱机，分布式网络已被分区隔离！需要同时在服务器机柜 (18, 15) 配置 Primary Gateway 并在开发工位 B (11, 17) 配置 Sub-Node Proxy。双端锁与代码协同才可恢复！",
           cpu_load=user.anomaly_cpu,
           status=user.anomaly_status,
       )
@@ -265,7 +277,22 @@ async def trigger_anomaly_endpoint(
 
   anomaly_id = request.anomaly_id if request else "db_cpu_overload"
 
-  if anomaly_id == "service_breaker_trip":
+  if anomaly_id == "network_partition":
+    user.active_anomaly = "network_partition"
+    user.anomaly_cpu = 95
+    user.anomaly_status = "active"
+    db.commit()
+
+    manager.partition_resolved_stations = {}
+
+    anomaly = schemas.SpaceAnomaly(
+        anomaly_id="network_partition",
+        title="分布式网络分区隔离大故障",
+        description="由于核心网关异常脱机，分布式网络已被分区隔离！需要同时在服务器机柜 (18, 15) 配置 Primary Gateway 并在开发工位 B (11, 17) 配置 Sub-Node Proxy。双端锁与代码协同才可恢复！",
+        cpu_load=95,
+        status="active",
+    )
+  elif anomaly_id == "service_breaker_trip":
     user.active_anomaly = "service_breaker_trip"
     user.anomaly_cpu = 88
     user.anomaly_status = "active"
@@ -332,6 +359,83 @@ async def resolve_anomaly_endpoint(
         status="fail",
         feedback="当前并无活跃的系统故障，无需抢修！",
         xp_gained=0,
+    )
+
+  if user.active_anomaly == "network_partition":
+    if not request.station_id:
+      return schemas.SpaceAnomalyResolveResponse(
+          status="fail",
+          feedback="❌ 诊断失败！提交网络分区故障配置时，必须指定终端 station_id (station_mainframe 或 station_dev_b)！",
+          xp_gained=0,
+      )
+    if request.station_id not in ["station_mainframe", "station_dev_b"]:
+      return schemas.SpaceAnomalyResolveResponse(
+          status="fail",
+          feedback=f"❌ 诊断失败！无效的物理终端 ID: {request.station_id}。",
+          xp_gained=0,
+      )
+
+    lock = manager.lock_manager.get_lock_status(request.station_id)
+    if not lock or (lock["holder_id"] != user_id and lock["holder_id"] not in ["ai_gao_ling", "gao_ling"]):
+      return schemas.SpaceAnomalyResolveResponse(
+          status="fail",
+          feedback=f"❌ 拒绝提交：你当前未持有终端 '{request.station_id}' 的独占租约锁！请先走进终端并点击激活占有锁。",
+          xp_gained=0,
+      )
+
+    # Compile the code
+    res = compile_and_diagnose(request.script, "python", f"network_partition:{request.station_id}")
+    status = res["status"]
+
+    if status == "success":
+      manager.partition_resolved_stations[request.station_id] = True
+
+      # Check if BOTH endpoints are resolved
+      if manager.partition_resolved_stations.get("station_mainframe") and manager.partition_resolved_stations.get("station_dev_b"):
+        user.active_anomaly = None
+        user.anomaly_cpu = 0
+        user.anomaly_status = "resolved"
+        xp_gained = 150
+        user.total_xp += xp_gained
+        db.commit()
+
+        # Clear state
+        manager.partition_resolved_stations = {}
+
+        # Broadcast resolved packet to other sessions
+        try:
+          await manager.broadcast({
+              "type": "ANOMALY_RESOLVED",
+              "xp_gained": xp_gained
+          })
+        except Exception as e:
+          logger.warning("Failed to broadcast anomaly resolution: %s", e)
+
+        feedback = "✓ 协作大功告成！Primary Gateway 与 Sub-Node Proxy 双端分区配置均通过编译与共识校验！分布式隔离状态解除，全系统恢复正常，CPU 负载降回 8%！"
+      else:
+        xp_gained = 0
+        feedback = f"✓ 该终端 '{request.station_id}' 网关代理配置代码编译成功并通过静态验证！目前正在等待对端工位终端提交另一侧配置以达成全网共识..."
+        # Broadcast partial resolution state to all clients
+        try:
+          await manager.broadcast({
+              "type": "PARTITION_PARTIAL_RESOLVED",
+              "station_id": request.station_id,
+              "resolved_stations": list(manager.partition_resolved_stations.keys())
+          })
+        except Exception as e:
+          logger.warning("Failed to broadcast partial resolution: %s", e)
+
+    else:
+      xp_gained = 0
+      feedback = f"❌ 该终端 '{request.station_id}' 配置代码编译失败，请根据控制台诊断调整重试！"
+
+    compile_logs_str = "\n".join(res.get("logs", []))
+    feedback = f"{feedback}\n\n[编译输出 stdout]:\n{compile_logs_str}"
+
+    return schemas.SpaceAnomalyResolveResponse(
+        status=status,
+        feedback=feedback,
+        xp_gained=xp_gained,
     )
 
   language = "python"
@@ -624,6 +728,8 @@ class ConnectionManager:
   def __init__(self):
     self.active_connections: dict[str, WebSocket] = {}
     self.player_states: dict[str, dict] = {}
+    self.lock_manager = LockManager()
+    self.partition_resolved_stations: dict[str, bool] = {}
 
   async def connect(self, player_id: str, websocket: WebSocket):
     await websocket.accept()
@@ -647,6 +753,12 @@ class ConnectionManager:
         "players": other_players
     })
 
+    # Send all active lock leases to the joining player
+    await websocket.send_json({
+        "type": "LOCK_STATE",
+        "active_locks": self.lock_manager.get_all_active_locks()
+    })
+
     # 2. Broadcast PLAYER_JOIN to everyone else
     await self.broadcast({
         "type": "PLAYER_JOIN",
@@ -654,11 +766,18 @@ class ConnectionManager:
         "state": self.player_states[player_id]
     }, exclude_player_id=player_id)
 
-  def disconnect(self, player_id: str):
+  async def disconnect(self, player_id: str):
     if player_id in self.active_connections:
       del self.active_connections[player_id]
     if player_id in self.player_states:
       del self.player_states[player_id]
+
+    released_stations = self.lock_manager.force_release_all_by_player(player_id)
+    if released_stations:
+      await self.broadcast({
+          "type": "LOCK_STATE",
+          "active_locks": self.lock_manager.get_all_active_locks()
+      })
 
   async def broadcast(self, message: dict, exclude_player_id: str | None = None):
     for player_id, connection in list(self.active_connections.items()):
@@ -667,7 +786,7 @@ class ConnectionManager:
       try:
         await connection.send_json(message)
       except Exception:
-        self.disconnect(player_id)
+        await self.disconnect(player_id)
 
   async def update_player_state(self, player_id: str, updates: dict):
     if player_id in self.player_states:
@@ -703,6 +822,15 @@ async def websocket_endpoint(websocket: WebSocket, player_id: str | None = None)
   try:
     while True:
       data = await websocket.receive_json()
+      
+      # Clean expired locks and broadcast if any expired
+      expired = manager.lock_manager.cleanup_expired_locks()
+      if expired:
+        await manager.broadcast({
+            "type": "LOCK_STATE",
+            "active_locks": manager.lock_manager.get_all_active_locks()
+        })
+
       msg_type = data.get("type")
       if msg_type == "MOVE":
         await manager.update_player_state(player_id, {
@@ -721,15 +849,59 @@ async def websocket_endpoint(websocket: WebSocket, player_id: str | None = None)
             "player_id": player_id,
             "message": data.get("message", "")
         }, exclude_player_id=player_id)
+      elif msg_type == "LOCK_ACQUIRE":
+        station_id = data.get("station_id")
+        ttl = data.get("ttl", 30.0)
+        target_pid = data.get("player_id", player_id)
+        success = manager.lock_manager.acquire_lock(station_id, target_pid, ttl)
+        await websocket.send_json({
+            "type": "LOCK_ACQUIRE_RESPONSE",
+            "station_id": station_id,
+            "success": success
+        })
+        if success:
+          await manager.broadcast({
+              "type": "LOCK_STATE",
+              "active_locks": manager.lock_manager.get_all_active_locks()
+          })
+      elif msg_type == "LOCK_RENEW":
+        station_id = data.get("station_id")
+        ttl = data.get("ttl", 30.0)
+        target_pid = data.get("player_id", player_id)
+        success = manager.lock_manager.renew_lock(station_id, target_pid, ttl)
+        await websocket.send_json({
+            "type": "LOCK_RENEW_RESPONSE",
+            "station_id": station_id,
+            "success": success
+        })
+        if success:
+          await manager.broadcast({
+              "type": "LOCK_STATE",
+              "active_locks": manager.lock_manager.get_all_active_locks()
+          })
+      elif msg_type == "LOCK_RELEASE":
+        station_id = data.get("station_id")
+        target_pid = data.get("player_id", player_id)
+        success = manager.lock_manager.release_lock(station_id, target_pid)
+        await websocket.send_json({
+            "type": "LOCK_RELEASE_RESPONSE",
+            "station_id": station_id,
+            "success": success
+        })
+        if success:
+          await manager.broadcast({
+              "type": "LOCK_STATE",
+              "active_locks": manager.lock_manager.get_all_active_locks()
+          })
   except WebSocketDisconnect:
-    manager.disconnect(player_id)
+    await manager.disconnect(player_id)
     await manager.broadcast({
         "type": "PLAYER_LEAVE",
         "player_id": player_id
     })
   except Exception as e:
     logger.error("WebSocket exception for player %s: %s", player_id, e)
-    manager.disconnect(player_id)
+    await manager.disconnect(player_id)
     await manager.broadcast({
         "type": "PLAYER_LEAVE",
         "player_id": player_id

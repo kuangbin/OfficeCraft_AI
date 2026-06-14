@@ -6,6 +6,52 @@ import { audioManager } from '@/utils/audioManager';
 import { getPlayerId } from '@/services/identity';
 import { useUserStore } from '@/stores/userStore';
 
+let lerpLoopStarted = false;
+const startLerpLoop = (store: any) => {
+  if (lerpLoopStarted) return;
+  lerpLoopStarted = true;
+  
+  const tick = () => {
+    const { remotePlayers, socket } = store.getState();
+    if (!socket) {
+      lerpLoopStarted = false;
+      return;
+    }
+    
+    let updated = false;
+    const nextRemotes = { ...remotePlayers };
+    
+    for (const pid in nextRemotes) {
+      const p = nextRemotes[pid] as any;
+      if (p.targetX === undefined) p.targetX = p.x;
+      if (p.targetY === undefined) p.targetY = p.y;
+      
+      const dx = p.targetX - p.x;
+      const dy = p.targetY - p.y;
+      
+      // Interpolate remote player coordinates smoothly
+      if (Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001) {
+        p.x += dx * 0.15;
+        p.y += dy * 0.15;
+        updated = true;
+      } else {
+        if (p.x !== p.targetX || p.y !== p.targetY) {
+          p.x = p.targetX;
+          p.y = p.targetY;
+          updated = true;
+        }
+      }
+    }
+    
+    if (updated) {
+      store.setState({ remotePlayers: nextRemotes });
+    }
+    
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+};
+
 export interface RemotePlayerState {
   id: string;
   x: number;
@@ -51,6 +97,13 @@ interface SpaceStore {
   remotePlayers: Record<string, RemotePlayerState>;
   socket: WebSocket | null;
 
+  // Network Simulation & Lock state
+  networkLatency: number;
+  networkLoss: number;
+  isPacketDroppedFlash: boolean;
+  activeLocks: Record<string, { holder_id: string; remaining_ttl: number }>;
+  partitionResolvedStations: string[];
+
   // Spatial Chat fields
   chatMessages: ChatMessage[];
   localLastMessage: string | null;
@@ -66,13 +119,21 @@ interface SpaceStore {
   setAmbientTheme: (theme: string) => void;
   triggerBookcaseSearch: (bookcaseId: string, query: string) => Promise<any>;
   triggerAnomaly: (anomalyId?: string) => Promise<void>;
-  resolveAnomaly: (script: string) => Promise<{ status: string; feedback: string; xp_gained: number }>;
+  resolveAnomaly: (script: string, stationId?: string) => Promise<{ status: string; feedback: string; xp_gained: number }>;
 
   // Multiplayer actions
   connectWebSocket: () => void;
   disconnectWebSocket: () => void;
   setLocalTyping: (isTyping: boolean) => void;
   sendChatMessage: (message: string) => void;
+  sendWSMessage: (message: any) => void;
+
+  // Network Simulation & Lock actions
+  setNetworkLatency: (latency: number) => void;
+  setNetworkLoss: (loss: number) => void;
+  acquireStationLock: (stationId: string) => void;
+  renewStationLock: (stationId: string) => void;
+  releaseStationLock: (stationId: string) => void;
 
   // Co-op actions
   submitCodeForReview: (title: string, code: string, lang: string) => Promise<void>;
@@ -155,6 +216,11 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
   activeAnomaly: null,
   remotePlayers: {},
   socket: null,
+  networkLatency: 0,
+  networkLoss: 0,
+  isPacketDroppedFlash: false,
+  activeLocks: {},
+  partitionResolvedStations: [],
   chatMessages: [],
   localLastMessage: null,
   localLastMessageTime: null,
@@ -230,30 +296,24 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
     audioManager.playStep();
 
     // Send MOVE update to WebSocket immediately
-    const socket = get().socket;
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({
-        type: 'MOVE',
-        x: nextX,
-        y: nextY,
-        direction: facing,
-        isWalking: true
-      }));
-    }
+    get().sendWSMessage({
+      type: 'MOVE',
+      x: nextX,
+      y: nextY,
+      direction: facing,
+      isWalking: true
+    });
 
     // Reset walking state after the tile-movement transition completes (100ms duration)
     setTimeout(() => {
       set({ isWalking: false });
-      const currentSocket = get().socket;
-      if (currentSocket && currentSocket.readyState === WebSocket.OPEN) {
-        currentSocket.send(JSON.stringify({
-          type: 'MOVE',
-          x: nextX,
-          y: nextY,
-          direction: facing,
-          isWalking: false
-        }));
-      }
+      get().sendWSMessage({
+        type: 'MOVE',
+        x: nextX,
+        y: nextY,
+        direction: facing,
+        isWalking: false
+      });
     }, 120);
 
     try {
@@ -302,19 +362,25 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
     }
   },
 
-  resolveAnomaly: async (script: string) => {
+  resolveAnomaly: async (script: string, stationId?: string) => {
     try {
       const isBreaker = get().activeAnomaly?.anomaly_id === 'service_breaker_trip';
-      const response = await api.resolveSpaceAnomaly(script);
+      const isPartition = get().activeAnomaly?.anomaly_id === 'network_partition';
+      const response = await api.resolveSpaceAnomaly(script, stationId);
       if (response.status === 'success') {
-        set({
-          activeAnomaly: null,
-          ambientTheme: 'default',
-        });
-        if (isBreaker) {
-          audioManager.playBreakerRestore();
-        } else {
-          audioManager.playCelebrateGold();
+        if (!isPartition || (response.feedback && response.feedback.includes("协作大功告成"))) {
+          set({
+            activeAnomaly: null,
+            ambientTheme: 'default',
+            partitionResolvedStations: [],
+          });
+          if (isBreaker) {
+            audioManager.playBreakerRestore();
+          } else if (isPartition) {
+            audioManager.playPartitionSuccess();
+          } else {
+            audioManager.playCelebrateGold();
+          }
         }
         // Sync user state to update XP
         await useUserStore.getState().syncFromBackend();
@@ -344,135 +410,176 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
     set({ socket: ws });
 
     ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        const { type } = data;
+      // Incoming network quality simulation
+      const loss = get().networkLoss;
+      const latency = get().networkLatency;
 
-        if (type === 'SYNC') {
-          set({ remotePlayers: data.players });
-        } else if (type === 'PLAYER_JOIN') {
-          const { player_id, state } = data;
-          set((prev) => ({
-            remotePlayers: {
-              ...prev.remotePlayers,
-              [player_id]: {
-                id: player_id,
-                x: state.x,
-                y: state.y,
-                facingDirection: state.direction,
-                isWalking: state.isWalking,
-                isTyping: state.isTyping,
-              },
-            },
-          }));
-        } else if (type === 'PLAYER_MOVE') {
-          const { player_id, x, y, direction, isWalking } = data;
-          set((prev) => ({
-            remotePlayers: {
-              ...prev.remotePlayers,
-              [player_id]: {
-                ...(prev.remotePlayers[player_id] || {}),
-                id: player_id,
-                x,
-                y,
-                facingDirection: direction,
-                isWalking,
-              },
-            },
-          }));
-        } else if (type === 'PLAYER_TYPING') {
-          const { player_id, isTyping } = data;
-          set((prev) => ({
-            remotePlayers: {
-              ...prev.remotePlayers,
-              [player_id]: {
-                ...(prev.remotePlayers[player_id] || {}),
-                id: player_id,
-                isTyping,
-              },
-            },
-          }));
-        } else if (type === 'PLAYER_CHAT') {
-          const { player_id, message } = data;
-          const timestamp = Date.now();
-          const newMsg: ChatMessage = {
-            id: `${player_id}-${timestamp}`,
-            playerId: player_id,
-            message,
-            timestamp,
-          };
-          audioManager.playChatChirp();
-          set((prev) => ({
-            chatMessages: [...prev.chatMessages, newMsg],
-            remotePlayers: {
-              ...prev.remotePlayers,
-              [player_id]: {
-                ...(prev.remotePlayers[player_id] || {}),
-                id: player_id,
-                lastMessage: message,
-                lastMessageTime: timestamp,
-              },
-            },
-          }));
-        } else if (type === 'PLAYER_LEAVE') {
-          const { player_id } = data;
-          set((prev) => {
-            const nextRemotes = { ...prev.remotePlayers };
-            delete nextRemotes[player_id];
-            return { remotePlayers: nextRemotes };
-          });
-        } else if (type === 'ANOMALY_TRIGGER') {
-          const { anomaly } = data;
-          const isBreaker = anomaly.anomaly_id === 'service_breaker_trip';
-          if (isBreaker) {
-            audioManager.playBreakerTrip();
-          } else {
-            audioManager.playAlarmSiren();
-          }
-          set({
-            activeAnomaly: anomaly,
-            ambientTheme: isBreaker ? 'alert-orange' : 'alert-red',
-          });
-        } else if (type === 'ANOMALY_RESOLVED') {
-          const isBreaker = get().activeAnomaly?.anomaly_id === 'service_breaker_trip';
-          if (isBreaker) {
-            audioManager.playBreakerRestore();
-          } else {
-            audioManager.playCelebrateGold();
-          }
-          set({
-            activeAnomaly: null,
-            ambientTheme: 'default',
-          });
-          useUserStore.getState().syncFromBackend().catch(console.warn);
-        } else if (type === 'COOP_REVIEW_CREATED') {
-          const { review } = data;
-          audioManager.playPeerReviewAlert();
-          set((prev) => ({
-            pendingReviews: [review, ...prev.pendingReviews],
-          }));
-        } else if (type === 'COOP_REVIEW_RESOLVED') {
-          const { review_id, status, feedback, xp_gained, author_id, reviewer_id } = data;
-          const currentPlayerId = getPlayerId() || '';
+      if (loss > 0 && Math.random() < loss) {
+        audioManager.playStaticStaticBurst();
+        set({ isPacketDroppedFlash: true });
+        setTimeout(() => set({ isPacketDroppedFlash: false }), 200);
+        console.warn('Incoming WebSocket packet dropped due to simulated packet loss!');
+        return;
+      }
 
-          if (status === 'approved') {
-            audioManager.playPeerReviewApproved();
-          } else {
-            audioManager.playStep(); // short mechanical step chime
-          }
+      const processMessage = () => {
+        try {
+          const data = JSON.parse(event.data);
+          const { type } = data;
 
-          // Remove completed review from pending
-          set((prev) => ({
-            pendingReviews: prev.pendingReviews.filter((r) => r.id !== review_id),
-          }));
-
-          // Force XP update if player is part of the transaction
-          if (currentPlayerId === author_id || currentPlayerId === reviewer_id) {
+          if (type === 'SYNC') {
+            // Setup target coordinates for LERP positioning
+            const syncedPlayers = { ...data.players };
+            for (const pid in syncedPlayers) {
+              syncedPlayers[pid].targetX = syncedPlayers[pid].x;
+              syncedPlayers[pid].targetY = syncedPlayers[pid].y;
+            }
+            set({ remotePlayers: syncedPlayers });
+          } else if (type === 'PLAYER_JOIN') {
+            const { player_id, state } = data;
+            set((prev) => ({
+              remotePlayers: {
+                ...prev.remotePlayers,
+                [player_id]: {
+                  id: player_id,
+                  x: state.x,
+                  y: state.y,
+                  targetX: state.x,
+                  targetY: state.y,
+                  facingDirection: state.direction,
+                  isWalking: state.isWalking,
+                  isTyping: state.isTyping,
+                },
+              },
+            }));
+          } else if (type === 'PLAYER_MOVE') {
+            const { player_id, x, y, direction, isWalking } = data;
+            set((prev) => ({
+              remotePlayers: {
+                ...prev.remotePlayers,
+                [player_id]: {
+                  ...(prev.remotePlayers[player_id] || {}),
+                  id: player_id,
+                  targetX: x,
+                  targetY: y,
+                  x: prev.remotePlayers[player_id]?.x !== undefined ? prev.remotePlayers[player_id].x : x,
+                  y: prev.remotePlayers[player_id]?.y !== undefined ? prev.remotePlayers[player_id].y : y,
+                  facingDirection: direction,
+                  isWalking,
+                },
+              },
+            }));
+          } else if (type === 'PLAYER_TYPING') {
+            const { player_id, isTyping } = data;
+            set((prev) => ({
+              remotePlayers: {
+                ...prev.remotePlayers,
+                [player_id]: {
+                  ...(prev.remotePlayers[player_id] || {}),
+                  id: player_id,
+                  isTyping,
+                },
+              },
+            }));
+          } else if (type === 'PLAYER_CHAT') {
+            const { player_id, message } = data;
+            const timestamp = Date.now();
+            const newMsg: ChatMessage = {
+              id: `${player_id}-${timestamp}`,
+              playerId: player_id,
+              message,
+              timestamp,
+            };
+            audioManager.playChatChirp();
+            set((prev) => ({
+              chatMessages: [...prev.chatMessages, newMsg],
+              remotePlayers: {
+                ...prev.remotePlayers,
+                [player_id]: {
+                  ...(prev.remotePlayers[player_id] || {}),
+                  id: player_id,
+                  lastMessage: message,
+                  lastMessageTime: timestamp,
+                },
+              },
+            }));
+          } else if (type === 'PLAYER_LEAVE') {
+            const { player_id } = data;
+            set((prev) => {
+              const nextRemotes = { ...prev.remotePlayers };
+              delete nextRemotes[player_id];
+              return { remotePlayers: nextRemotes };
+            });
+          } else if (type === 'ANOMALY_TRIGGER') {
+            const { anomaly } = data;
+            const isBreaker = anomaly.anomaly_id === 'service_breaker_trip';
+            const isPartition = anomaly.anomaly_id === 'network_partition';
+            if (isBreaker) {
+              audioManager.playBreakerTrip();
+            } else if (isPartition) {
+              audioManager.playAlarmSiren(); // Play cyber pulse siren
+            } else {
+              audioManager.playAlarmSiren();
+            }
+            set({
+              activeAnomaly: anomaly,
+              ambientTheme: isBreaker ? 'alert-orange' : (isPartition ? 'alert-cyan' : 'alert-red'),
+              partitionResolvedStations: [],
+            });
+          } else if (type === 'ANOMALY_RESOLVED') {
+            const isBreaker = get().activeAnomaly?.anomaly_id === 'service_breaker_trip';
+            const isPartition = get().activeAnomaly?.anomaly_id === 'network_partition';
+            if (isBreaker) {
+              audioManager.playBreakerRestore();
+            } else if (isPartition) {
+              audioManager.playPartitionSuccess();
+            } else {
+              audioManager.playCelebrateGold();
+            }
+            set({
+              activeAnomaly: null,
+              ambientTheme: 'default',
+              partitionResolvedStations: [],
+            });
             useUserStore.getState().syncFromBackend().catch(console.warn);
+          } else if (type === 'COOP_REVIEW_CREATED') {
+            const { review } = data;
+            audioManager.playPeerReviewAlert();
+            set((prev) => ({
+              pendingReviews: [review, ...prev.pendingReviews],
+            }));
+          } else if (type === 'COOP_REVIEW_RESOLVED') {
+            const { review_id, status, feedback, xp_gained, author_id, reviewer_id } = data;
+            const currentPlayerId = getPlayerId() || '';
+
+            if (status === 'approved') {
+              audioManager.playPeerReviewApproved();
+            } else {
+              audioManager.playStep();
+            }
+
+            set((prev) => ({
+              pendingReviews: prev.pendingReviews.filter((r) => r.id !== review_id),
+            }));
+
+            if (currentPlayerId === author_id || currentPlayerId === reviewer_id) {
+              useUserStore.getState().syncFromBackend().catch(console.warn);
+            }
+          } else if (type === 'LOCK_STATE') {
+            set({ activeLocks: data.active_locks });
+          } else if (type === 'PARTITION_PARTIAL_RESOLVED') {
+            set({ partitionResolvedStations: data.resolved_stations });
+            audioManager.playChatChirp();
           }
+        } catch (err) {
+          console.warn('Failed to parse WebSocket message:', err);
         }
-      } catch (err) {
-        console.warn('Failed to parse WebSocket message:', err);
+      };
+
+      if (latency > 0) {
+        setTimeout(processMessage, latency);
+      } else {
+        processMessage();
       }
     };
 
@@ -489,6 +596,9 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
     ws.onerror = (err) => {
       console.error('Space WebSocket error:', err);
     };
+
+    // Start remote players smoothing LERP loop
+    startLerpLoop(useSpaceStore);
   },
 
   disconnectWebSocket: () => {
@@ -496,20 +606,16 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
     if (socket) {
       socket.onclose = null;
       socket.close();
-      set({ socket: null, remotePlayers: {} });
+      set({ socket: null, remotePlayers: {}, activeLocks: {} });
       console.log('Space WebSocket closed manually.');
     }
   },
 
   setLocalTyping: (isTyping: boolean) => {
-    const { socket } = get();
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: 'TYPING', isTyping }));
-    }
+    get().sendWSMessage({ type: 'TYPING', isTyping });
   },
 
   sendChatMessage: (message: string) => {
-    const { socket } = get();
     const playerId = getPlayerId() || 'local';
     const timestamp = Date.now();
     const newMsg: ChatMessage = {
@@ -527,12 +633,55 @@ export const useSpaceStore = create<SpaceStore>((set, get) => ({
       localLastMessageTime: timestamp,
     }));
 
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({
-        type: 'CHAT',
-        message
-      }));
+    get().sendWSMessage({
+      type: 'CHAT',
+      message
+    });
+  },
+
+  sendWSMessage: (message: any) => {
+    const { socket, networkLatency, networkLoss } = get();
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+
+    if (networkLoss > 0 && Math.random() < networkLoss) {
+      audioManager.playStaticStaticBurst();
+      set({ isPacketDroppedFlash: true });
+      setTimeout(() => set({ isPacketDroppedFlash: false }), 200);
+      console.warn('Outgoing WebSocket packet dropped due to simulated packet loss!');
+      return;
     }
+
+    const payload = JSON.stringify(message);
+    if (networkLatency > 0) {
+      setTimeout(() => {
+        const s = get().socket;
+        if (s && s.readyState === WebSocket.OPEN) {
+          s.send(payload);
+        }
+      }, networkLatency);
+    } else {
+      socket.send(payload);
+    }
+  },
+
+  setNetworkLatency: (latency: number) => {
+    set({ networkLatency: latency });
+  },
+
+  setNetworkLoss: (loss: number) => {
+    set({ networkLoss: loss });
+  },
+
+  acquireStationLock: (stationId: string) => {
+    get().sendWSMessage({ type: 'LOCK_ACQUIRE', station_id: stationId });
+  },
+
+  renewStationLock: (stationId: string) => {
+    get().sendWSMessage({ type: 'LOCK_RENEW', station_id: stationId });
+  },
+
+  releaseStationLock: (stationId: string) => {
+    get().sendWSMessage({ type: 'LOCK_RELEASE', station_id: stationId });
   },
 
   submitCodeForReview: async (title: string, code: string, lang: string) => {

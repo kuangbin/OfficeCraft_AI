@@ -453,10 +453,10 @@ export const api = {
     });
   },
 
-  async resolveSpaceAnomaly(script: string, signal?: AbortSignal): Promise<SpaceAnomalyResolveResponse> {
+  async resolveSpaceAnomaly(script: string, stationId?: string, signal?: AbortSignal): Promise<SpaceAnomalyResolveResponse> {
     return request<SpaceAnomalyResolveResponse>('/api/v1/space/anomaly/resolve', {
       method: 'POST',
-      body: JSON.stringify({ script }),
+      body: JSON.stringify({ script, station_id: stationId }),
       signal,
     });
   },

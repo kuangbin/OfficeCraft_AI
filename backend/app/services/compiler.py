@@ -195,6 +195,34 @@ def safe_execute_in_sandbox(code: str, context: str = None) -> Tuple[bool, List[
         logs.append("    ✓ Transaction rolled back successfully to prevent locking.")
       if mock_db.committed:
         logs.append("    ✓ Transaction committed successfully under normal route.")
+
+    elif context and context.startswith("network_partition"):
+      station_id = "station_mainframe"
+      if ":" in context:
+        station_id = context.split(":")[1]
+      
+      logs.append(f"🔬 [0.6s] Sandbox asserting Network Partition state for station '{station_id}'...")
+      if station_id == "station_mainframe":
+        if "route_request" in safe_globals:
+          fn = safe_globals["route_request"]
+          res = fn({"ip": "192.168.1.100", "payload": "ping"})
+          logs.append(f"  ↳ Test: Routing packet through Primary Gateway, result: {res}")
+          logs.append("    ✓ Primary Gateway packet routing asserted successfully.")
+        else:
+          logs.append("⚠️ Sandbox warning: Primary gateway route function 'route_request' not declared. Write 'def route_request(packet):' returning route info.")
+          success = False
+      elif station_id == "station_dev_b":
+        if "sync_data" in safe_globals:
+          fn = safe_globals["sync_data"]
+          res = fn({"node_id": "sub_node_b", "data": "update"})
+          logs.append(f"  ↳ Test: Replicating consensus node data, result: {res}")
+          logs.append("    ✓ Sub-Node Proxy consensus synchronization asserted successfully.")
+        else:
+          logs.append("⚠️ Sandbox warning: Sub-node proxy consensus sync function 'sync_data' not declared. Write 'def sync_data(packet):' returning sync info.")
+          success = False
+      else:
+        logs.append(f"⚠️ Sandbox warning: Unknown network partition station '{station_id}'.")
+        success = False
         
   except Exception as e:
     success = False

@@ -125,6 +125,31 @@ class AudioManager {
   }
 
   /**
+   * Synthesizes a tiny crisp retro button click.
+   */
+  public playClick() {
+    this.initContext();
+    if (this.isMuted || !this.ctx || this.volume <= 0) return;
+
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gainNode = this.ctx.createGain();
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(1200, now);
+    osc.frequency.exponentialRampToValueAtTime(300, now + 0.02);
+
+    gainNode.gain.setValueAtTime(0.03 * this.volume, now);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.02);
+
+    osc.connect(gainNode);
+    gainNode.connect(this.ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.02);
+  }
+
+  /**
    * Synthesizes a high-pitched rising digital chime for panels opening.
    */
   public playOpen() {
@@ -461,6 +486,74 @@ class AudioManager {
 
       osc.start(startAt);
       osc.stop(startAt + 0.12);
+    });
+  }
+
+  /**
+   * Synthesizes a rapid, low-fi 8-bit static burst representing network packet loss.
+   */
+  public playStaticStaticBurst() {
+    this.initContext();
+    if (this.isMuted || !this.ctx || this.volume <= 0) return;
+
+    const now = this.ctx.currentTime;
+    
+    // Create a quick noise buffer of 100ms
+    const bufferSize = this.ctx.sampleRate * 0.1;
+    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+
+    const noiseNode = this.ctx.createBufferSource();
+    noiseNode.buffer = buffer;
+
+    // Bandpass filter to create a static/radio scratch effect
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(1200, now);
+    filter.Q.setValueAtTime(3.0, now);
+
+    const gainNode = this.ctx.createGain();
+    gainNode.gain.setValueAtTime(0.08 * this.volume, now);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+
+    noiseNode.connect(filter);
+    filter.connect(gainNode);
+    gainNode.connect(this.ctx.destination);
+
+    noiseNode.start(now);
+    noiseNode.stop(now + 0.1);
+  }
+
+  /**
+   * Synthesizes a beautiful cascading network restoration chord.
+   */
+  public playPartitionSuccess() {
+    this.initContext();
+    if (this.isMuted || !this.ctx || this.volume <= 0) return;
+
+    const now = this.ctx.currentTime;
+    // Wind-chime sci-fi ascending arpeggio (C5 - F5 - G5 - C6 - E6)
+    const notes = [523.25, 698.46, 783.99, 1046.50, 1318.51];
+    notes.forEach((freq, idx) => {
+      const osc = this.ctx!.createOscillator();
+      const gainNode = this.ctx!.createGain();
+      const startDelay = idx * 0.08;
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now + startDelay);
+
+      gainNode.gain.setValueAtTime(0, now + startDelay);
+      gainNode.gain.linearRampToValueAtTime(0.06 * this.volume, now + startDelay + 0.04);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, now + startDelay + 0.5);
+
+      osc.connect(gainNode);
+      gainNode.connect(this.ctx!.destination);
+
+      osc.start(now + startDelay);
+      osc.stop(now + startDelay + 0.5);
     });
   }
 }

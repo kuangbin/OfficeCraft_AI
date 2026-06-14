@@ -121,6 +121,17 @@ export default function SpaceBoard() {
     submitCodeForReview,
     fetchPendingReviews,
     setCoopWhiteboardOpen,
+    networkLatency,
+    networkLoss,
+    isPacketDroppedFlash,
+    activeLocks,
+    partitionResolvedStations,
+    setNetworkLatency,
+    setNetworkLoss,
+    acquireStationLock,
+    renewStationLock,
+    releaseStationLock,
+    sendWSMessage,
   } = useSpaceStore();
 
   const { currentCareerId, totalXp, selectCareer, addXp } = useUserStore();
@@ -130,6 +141,67 @@ export default function SpaceBoard() {
   // Internal states
   const lastMoveTimeRef = useRef<number>(0);
   const [activeZone, setActiveZone] = useState<string>('Lobby');
+
+  // Phase 18 state additions
+  const isNearDevBTerminal = useMemo(() => {
+    return Math.abs(playerCoords.x - 11) <= 1 && Math.abs(playerCoords.y - 17) <= 1;
+  }, [playerCoords]);
+
+  const [currentTerminalStationId, setCurrentTerminalStationId] = useState<'station_mainframe' | 'station_dev_b' | 'station_whiteboard' | null>(null);
+  const [gaoLingStep, setGaoLingStep] = useState<'idle' | 'active' | 'locked' | 'submitting' | 'done'>('idle');
+
+  // Lock auto-renew heartbeat loop
+  useEffect(() => {
+    if (!currentTerminalStationId) return;
+    const interval = setInterval(() => {
+      renewStationLock(currentTerminalStationId);
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [currentTerminalStationId, renewStationLock]);
+
+  // AI Autopilot Gao Ling automation effects
+  const isGaoLingAutopilotActive = activeAnomaly?.anomaly_id === 'network_partition' && Object.keys(remotePlayers).length === 0;
+
+  useEffect(() => {
+    if (!isGaoLingAutopilotActive) {
+      if (gaoLingStep !== 'idle') {
+        setGaoLingStep('idle');
+      }
+      return;
+    }
+    if (gaoLingStep === 'idle') {
+      setGaoLingStep('active');
+    }
+  }, [isGaoLingAutopilotActive, gaoLingStep]);
+
+  useEffect(() => {
+    if (!isGaoLingAutopilotActive) return;
+
+    if (gaoLingStep === 'active') {
+      const timer = setTimeout(() => {
+        sendWSMessage({
+          type: 'LOCK_ACQUIRE',
+          station_id: 'station_dev_b',
+          player_id: 'ai_gao_ling'
+        });
+        setGaoLingStep('locked');
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+
+    if (gaoLingStep === 'locked') {
+      const timer = setTimeout(async () => {
+        try {
+          const mockScript = `def sync_data(packet):\n    print("Gao Ling Autopilot syncing consensus data...")\n    return {"status": "consensus_ok", "node": "sub_node_b"}`;
+          await resolveAnomaly(mockScript, 'station_dev_b');
+          setGaoLingStep('done');
+        } catch (err) {
+          console.error('Gao Ling autopilot submit failed:', err);
+        }
+      }, 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [isGaoLingAutopilotActive, gaoLingStep, sendWSMessage, resolveAnomaly]);
 
   // Recovery terminal states (Phase 13)
   const [cpuHistory, setCpuHistory] = useState<number[]>([]);
@@ -481,7 +553,11 @@ export default function SpaceBoard() {
     if (activeOverlay === 'skills' || ambientTheme === 'quiet-blue') {
       setAmbientTheme('default');
     }
-  }, [activeOverlay, ambientTheme, setAmbientTheme]);
+    if (currentTerminalStationId) {
+      releaseStationLock(currentTerminalStationId);
+      setCurrentTerminalStationId(null);
+    }
+  }, [activeOverlay, ambientTheme, setAmbientTheme, currentTerminalStationId, releaseStationLock]);
 
   const closeCoopWhiteboard = useCallback(() => {
     audioManager.playClose();
@@ -489,7 +565,11 @@ export default function SpaceBoard() {
     if (ambientTheme === 'quiet-blue') {
       setAmbientTheme('default');
     }
-  }, [ambientTheme, setAmbientTheme, setCoopWhiteboardOpen]);
+    if (currentTerminalStationId) {
+      releaseStationLock(currentTerminalStationId);
+      setCurrentTerminalStationId(null);
+    }
+  }, [ambientTheme, setAmbientTheme, setCoopWhiteboardOpen, currentTerminalStationId, releaseStationLock]);
 
   const openCoopWhiteboard = useCallback(() => {
     audioManager.playOpen();
@@ -674,13 +754,25 @@ export default function SpaceBoard() {
           if (isNearSkillTerminal) {
             if (activeAnomaly) {
               openOverlay('recovery');
+              setCurrentTerminalStationId('station_mainframe');
+              acquireStationLock('station_mainframe');
             } else {
               openOverlay('skills');
             }
             return;
           }
+          if (isNearDevBTerminal) {
+            if (activeAnomaly && activeAnomaly.anomaly_id === 'network_partition') {
+              openOverlay('recovery');
+              setCurrentTerminalStationId('station_dev_b');
+              acquireStationLock('station_dev_b');
+            }
+            return;
+          }
           if (isNearCoopWhiteboard) {
             openCoopWhiteboard();
+            setCurrentTerminalStationId('station_whiteboard');
+            acquireStationLock('station_whiteboard');
             return;
           }
           if (interactiveNpcId) {
@@ -716,6 +808,8 @@ export default function SpaceBoard() {
     isNearDevWorkstation,
     isNearArchiveBookshelf,
     isNearSkillTerminal,
+    isNearDevBTerminal,
+    activeAnomaly,
     activeChatNpc,
     isNearCoopWhiteboard,
     isCoopWhiteboardOpen,
@@ -724,6 +818,9 @@ export default function SpaceBoard() {
     closeOverlay,
     openCoopWhiteboard,
     closeCoopWhiteboard,
+    currentTerminalStationId,
+    setCurrentTerminalStationId,
+    acquireStationLock,
   ]);
 
   const toggleMute = () => {
@@ -1184,14 +1281,99 @@ export default function SpaceBoard() {
           <div className={`p-3 text-center border font-bold text-xs select-none rounded-lg animate-pulse ${
             ambientTheme === 'quiet-blue' ? 'bg-blue-950/40 border-cyan-800/60 text-cyan-400' :
             ambientTheme === 'alert-red' ? 'bg-red-950/40 border-red-800/60 text-red-400' :
+            ambientTheme === 'alert-cyan' ? 'bg-cyan-950/40 border-cyan-700/60 text-cyan-300' :
             ambientTheme === 'celebrate-gold' ? 'bg-amber-950/40 border-amber-800/60 text-amber-400' :
             'bg-slate-900/40 border-slate-800 text-slate-400'
           }`}>
             {ambientTheme === 'quiet-blue' ? '🔵 静谧幽蓝工作环境' :
              ambientTheme === 'alert-red' ? '🚨 警报红色异常主题' :
+             ambientTheme === 'alert-cyan' ? '🌀 闪烁冷青协作主题 (网络分区隔离)' :
              ambientTheme === 'celebrate-gold' ? '✨ 金色庆典丰碑主题' :
              '⚪ 经典日光灰度环境'}
           </div>
+        </div>
+
+        {/* 📶 物理信道调试器 */}
+        <div className={`space-y-2 font-mono border p-3 rounded-lg bg-slate-950/40 transition-all duration-300 ${
+          isPacketDroppedFlash ? 'border-amber-500/80 shadow-[0_0_15px_rgba(245,158,11,0.3)]' : 'border-slate-800/60'
+        }`}>
+          <div className="flex justify-between items-center">
+            <span className="text-[9px] font-bold text-slate-500 tracking-wider">📶 物理信道调试器</span>
+            <div className="flex items-center gap-1">
+              <span className={`w-2 h-2 rounded-full ${
+                networkLoss > 0 || networkLatency >= 300 ? 'bg-red-500 animate-ping' :
+                networkLatency === 100 ? 'bg-amber-400 animate-pulse' :
+                'bg-emerald-400'
+              }`} />
+              <span className={`text-[9px] font-bold ${
+                networkLoss > 0 || networkLatency >= 300 ? 'text-red-400' :
+                networkLatency === 100 ? 'text-amber-400' :
+                'text-emerald-400'
+              }`}>
+                {networkLoss > 0 || networkLatency >= 300 ? '📶 阻塞 / 丢包' :
+                 networkLatency === 100 ? '📶 延迟' :
+                 '📶 极佳'}
+              </span>
+            </div>
+          </div>
+
+          {/* Latency Selection */}
+          <div className="space-y-1">
+            <div className="flex justify-between text-[8px] text-slate-500 uppercase">
+              <span>信道延迟 (Latency)</span>
+              <span className="text-cyan-400 font-bold">{networkLatency} ms</span>
+            </div>
+            <div className="grid grid-cols-4 gap-1">
+              {[0, 100, 300, 800].map((val) => (
+                <button
+                  key={`lat-${val}`}
+                  onClick={() => {
+                    setNetworkLatency(val);
+                    audioManager.playClick();
+                  }}
+                  className={`text-[9px] font-bold py-1 rounded transition-all border ${
+                    networkLatency === val
+                      ? 'bg-cyan-950 border-cyan-500 text-cyan-300'
+                      : 'bg-slate-900/50 border-slate-800 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {val === 0 ? '直连' : `${val}ms`}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Packet Loss Selection */}
+          <div className="space-y-1">
+            <div className="flex justify-between text-[8px] text-slate-500 uppercase">
+              <span>人工丢包 (Packet Loss)</span>
+              <span className="text-amber-400 font-bold">{(networkLoss * 100).toFixed(0)}%</span>
+            </div>
+            <div className="grid grid-cols-4 gap-1">
+              {[0, 0.05, 0.15, 0.35].map((val) => (
+                <button
+                  key={`loss-${val}`}
+                  onClick={() => {
+                    setNetworkLoss(val);
+                    audioManager.playClick();
+                  }}
+                  className={`text-[9px] font-bold py-1 rounded transition-all border ${
+                    networkLoss === val
+                      ? 'bg-amber-950/80 border-amber-500 text-amber-300'
+                      : 'bg-slate-900/50 border-slate-800 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {(val * 100).toFixed(0)}%
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {isPacketDroppedFlash && (
+            <div className="text-center text-[9px] text-amber-400 font-bold animate-pulse py-0.5 bg-amber-950/40 border border-amber-900/60 rounded">
+              ⚠️ WARNING: PACKET DROP OCCURRED!
+            </div>
+          )}
         </div>
 
         {/* Active Objectives checklist */}
@@ -1664,15 +1846,32 @@ export default function SpaceBoard() {
 
             {/* NPCs characters spawn */}
             {Object.values(NPC_INFO).map((npc) => {
-              const coords = npc.id === 'mentor_ling' ? { x: 15, y: 6 } : npc.id === 'pm_amy' ? { x: 18, y: 5 } : { x: 20, y: 20 };
+              let coords = npc.id === 'mentor_ling' ? { x: 15, y: 6 } : npc.id === 'pm_amy' ? { x: 18, y: 5 } : { x: 20, y: 20 };
+              if (npc.id === 'mentor_ling' && isGaoLingAutopilotActive) {
+                coords = { x: 11, y: 17 };
+              }
               const isTargetNear = interactiveNpcId === npc.id;
               return (
                 <div
                   key={npc.id}
                   onClick={() => startConversation(npc)}
-                  className="absolute top-0 left-0 w-[32px] h-[32px] flex items-center justify-center text-xl cursor-pointer z-20 select-none group"
+                  className={`absolute top-0 left-0 w-[32px] h-[32px] flex items-center justify-center text-xl cursor-pointer z-20 select-none group ${
+                    npc.id === 'mentor_ling' && isGaoLingAutopilotActive ? 'transition-all duration-[4000ms] ease-in-out' : ''
+                  }`}
                   style={{ transform: `translate3d(${coords.x * 32}px, ${coords.y * 32}px, 0)` }}
                 >
+                  {/* Dialogue bubble for Gao Ling Autopilot */}
+                  {npc.id === 'mentor_ling' && isGaoLingAutopilotActive && gaoLingStep !== 'idle' && (
+                    <div className="absolute bottom-[48px] flex flex-col items-center z-50 animate-speech-bubble pointer-events-none">
+                      <div className="bg-slate-950/95 border-2 border-cyan-400 text-[9px] text-cyan-200 font-mono py-1 px-2 rounded-md shadow-2xl w-[190px] text-center break-words backdrop-blur-sm relative">
+                        {gaoLingStep === 'active' && '⚠️ 分布式网关发生网络隔离故障！我先赶往工位 B (11,17) 修复备份共识，你们快去机房 (18,15) 终端并网协作！'}
+                        {gaoLingStep === 'locked' && '🔌 我已在工位 B 独占并请求校验同步！机房核心网端必须同时下发索引重建，双端闭环即可消退分区故障！'}
+                        {gaoLingStep === 'done' && '✅ 我已成功在备份端下发数据！等候机房控制端索引同步，双端并网即可消除这次大故障！'}
+                      </div>
+                      <div className="w-1.5 h-1.5 bg-slate-950 border-r-2 border-b-2 border-cyan-400 rotate-45 -mt-[4px] relative z-10" />
+                    </div>
+                  )}
+
                   {/* Character shadow */}
                   <div className="absolute -bottom-1.5 w-6 h-2 bg-black/45 rounded-full blur-[1px] z-10 pointer-events-none" />
                   {isTargetNear && (
@@ -1808,6 +2007,36 @@ export default function SpaceBoard() {
               );
             })}
 
+            {/* Work Workstations Padlocks (🔒) */}
+            {[
+              { id: 'station_mainframe', x: 18, y: 15, name: '机柜' },
+              { id: 'station_whiteboard', x: 15, y: 5, name: '白板' },
+              { id: 'station_dev_b', x: 11, y: 17, name: '工位B' },
+            ].map((station) => {
+              const lockInfo = activeLocks[station.id];
+              if (!lockInfo) return null;
+              
+              const holder = lockInfo.holder_id;
+              const shortHolder = holder.length > 5 ? holder.substring(0, 5) : holder;
+              
+              return (
+                <div
+                  key={`padlock-${station.id}`}
+                  className="absolute top-0 left-0 w-[32px] h-[32px] flex flex-col items-center justify-center z-25 pointer-events-auto select-none"
+                  style={{ transform: `translate3d(${station.x * 32}px, ${station.y * 32}px, 0)` }}
+                >
+                  <div className="absolute -top-7 flex flex-col items-center z-30 animate-bounce">
+                    <div className="bg-red-950/95 border border-red-500 text-[8px] font-bold text-red-400 font-mono py-0.5 px-1 rounded whitespace-nowrap shadow-md flex items-center gap-1">
+                      <span>🔒</span>
+                      <span>{shortHolder}</span>
+                    </div>
+                    <div className="w-1 h-1 bg-red-500 rotate-45 -mt-0.5" />
+                  </div>
+                  <div className="absolute inset-0 border-2 border-red-500/60 rounded bg-red-500/10 animate-pulse pointer-events-none" />
+                </div>
+              );
+            })}
+
             {/* Dynamic ambient lighting/spotlight mask (Phase 10) */}
             <div 
               className="absolute inset-0 pointer-events-none z-25 transition-all duration-300 mix-blend-multiply"
@@ -1816,6 +2045,7 @@ export default function SpaceBoard() {
                   ambientTheme === 'quiet-blue' ? 'rgba(186, 230, 253, 0.25) 0%, rgba(30, 41, 59, 0.65) 60%, rgba(15, 23, 42, 0.92) 100%' :
                   ambientTheme === 'alert-orange' ? 'rgba(254, 215, 170, 0.22) 0%, rgba(249, 115, 22, 0.65) 50%, rgba(15, 23, 42, 0.95) 100%' :
                   ambientTheme === 'alert-red' ? 'rgba(254, 202, 202, 0.2) 0%, rgba(127, 29, 29, 0.7) 50%, rgba(15, 23, 42, 0.95) 100%' :
+                  ambientTheme === 'alert-cyan' ? 'rgba(207, 250, 254, 0.22) 0%, rgba(6, 182, 212, 0.65) 50%, rgba(15, 23, 42, 0.95) 100%' :
                   ambientTheme === 'celebrate-gold' ? 'rgba(254, 243, 199, 0.3) 0%, rgba(120, 53, 4, 0.6) 60%, rgba(15, 23, 42, 0.9) 100%' :
                   'rgba(255, 255, 240, 0.15) 0%, rgba(30, 41, 59, 0.5) 65%, rgba(15, 23, 42, 0.88) 100%'
                 })`
@@ -1853,6 +2083,13 @@ export default function SpaceBoard() {
                 <div className="absolute bottom-12 left-1/4 text-amber-300 text-xs animate-bounce opacity-80">✨</div>
                 <div className="absolute bottom-36 right-1/3 text-amber-300 text-xs animate-pulse opacity-60">✨</div>
                 <div className="absolute bottom-24 right-12 text-amber-300 text-sm animate-bounce opacity-70">🌟</div>
+              </div>
+            )}
+            {ambientTheme === 'alert-cyan' && (
+              <div className="absolute inset-0 bg-cyan-950/20 mix-blend-color-dodge pointer-events-none z-10 border-8 border-cyan-800/40 shadow-[inset_0_0_50px_rgba(6,182,212,0.25)] animate-pulse">
+                <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-cyan-950 border-2 border-cyan-500 text-cyan-400 font-mono text-[9px] py-1 px-3 rounded flex items-center gap-1.5 font-bold animate-bounce">
+                  <span>🌀 DISTRIBUTED NETWORK PARTITION ISOLATED</span>
+                </div>
               </div>
             )}
           </div>
@@ -2469,14 +2706,37 @@ export default function SpaceBoard() {
                       <textarea
                         value={recoveryScript}
                         onChange={(e) => setRecoveryScript(e.target.value)}
+                        disabled={!!(currentTerminalStationId && activeLocks[currentTerminalStationId] && activeLocks[currentTerminalStationId].holder_id !== (getPlayerId() || ''))}
                         placeholder={
-                          isBreakerTrip
-                            ? `# Python 示例: 编写分布式熔断降级中间件\n@circuitbreaker(timeout=3, fallback=handle_timeout_fallback)\ndef request_ms_b_service(payload):\n    # 当微服务 B 心跳状态 open 时触发熔断，切回 closed 自愈机制\n    if service_b.is_open():\n        raise Exception("Circuit Breaker is Open")\n    return service_b.call(payload)\n\ndef handle_timeout_fallback(payload):\n    return {"status": "fallback_offline", "data": "Using local fallback backup"}`
-                            : `-- 示例 1: 创建缺失索引以解决 CPU 过载\n-- CREATE INDEX idx_user ON orders(user_id);\n\n# 示例 2: 使用 try-except 与 rollback 机制防止连接超时死锁\ntry:\n    db.commit()\nexcept Exception as e:\n    db.rollback()\n    raise e`
+                          currentTerminalStationId && activeLocks[currentTerminalStationId] && activeLocks[currentTerminalStationId].holder_id !== (getPlayerId() || '')
+                            ? `[⚠️ 终端只读] 当前终端正由 ${activeLocks[currentTerminalStationId].holder_id} 独占操作中，请等待其释放...`
+                            : isBreakerTrip
+                              ? `# Python 示例: 编写分布式熔断降级中间件\n@circuitbreaker(timeout=3, fallback=handle_timeout_fallback)\ndef request_ms_b_service(payload):\n    # 当微服务 B 心跳状态 open 时触发熔断，切回 closed 自愈机制\n    if service_b.is_open():\n        raise Exception("Circuit Breaker is Open")\n    return service_b.call(payload)\n\ndef handle_timeout_fallback(payload):\n    return {"status": "fallback_offline", "data": "Using local fallback backup"}`
+                              : `-- 示例 1: 创建缺失索引以解决 CPU 过载\n-- CREATE INDEX idx_user ON orders(user_id);\n\n# 示例 2: 使用 try-except 与 rollback 机制防止连接超时死锁\ntry:\n    db.commit()\nexcept Exception as e:\n    db.rollback()\n    raise e`
                         }
-                        className="flex-1 h-full bg-transparent text-slate-200 p-3 outline-none resize-none focus:ring-0 placeholder-slate-700 leading-[1.3] overflow-y-auto"
+                        className={`flex-1 h-full bg-transparent text-slate-200 p-3 outline-none resize-none focus:ring-0 placeholder-slate-700 leading-[1.3] overflow-y-auto ${
+                          currentTerminalStationId && activeLocks[currentTerminalStationId] && activeLocks[currentTerminalStationId].holder_id !== (getPlayerId() || '') ? 'opacity-40 select-none' : ''
+                        }`}
                         style={{ caretColor: isBreakerTrip ? '#f97316' : '#ef4444' }}
                       />
+
+                      {/* Frosted glass read-only cover & warning banner */}
+                      {currentTerminalStationId && activeLocks[currentTerminalStationId] && activeLocks[currentTerminalStationId].holder_id !== (getPlayerId() || '') && (
+                        <div className="absolute inset-0 bg-slate-950/40 backdrop-blur-[2px] flex flex-col items-center justify-center text-center p-4 z-10 select-none">
+                          <div className="bg-amber-950/90 border border-amber-500/80 p-4 rounded-xl shadow-2xl max-w-sm flex flex-col gap-2 animate-pulse">
+                            <span className="text-xl">⚠️</span>
+                            <h4 className="font-bold text-amber-300 text-xs">终端处于只读模式 (Read-Only)</h4>
+                            <p className="text-[10px] text-amber-400 leading-normal">
+                              该控制台已被玩家 <span className="underline font-bold text-white">{activeLocks[currentTerminalStationId].holder_id}</span> 独占锁定。分布式锁租约正在自动续期，请在物理地图中协作或等待其释位离开。
+                            </p>
+                            {activeLocks[currentTerminalStationId].remaining_ttl !== undefined && (
+                              <div className="text-[9px] text-amber-500 border border-amber-900/40 py-0.5 px-2 bg-slate-950/60 rounded self-center">
+                                独占剩余租约: {activeLocks[currentTerminalStationId].remaining_ttl.toFixed(1)}s
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -2498,7 +2758,7 @@ export default function SpaceBoard() {
 
                     <button
                       onClick={async () => {
-                        if (isRecoveryCompiling || !recoveryScript.trim()) return;
+                        if (isRecoveryCompiling || !recoveryScript.trim() || (currentTerminalStationId && activeLocks[currentTerminalStationId] && activeLocks[currentTerminalStationId].holder_id !== (getPlayerId() || ''))) return;
                         setIsRecoveryCompiling(true);
                         setTerminalOutput(prev => [...prev, '>>> EVALUATION PIPELINE RUNNING...', '>>> RUNNING SYNTAX & SEMANTIC STATIC CHECKS...']);
                         audioManager.playTypewriter();
@@ -2537,9 +2797,9 @@ export default function SpaceBoard() {
                           setIsRecoveryCompiling(false);
                         }
                       }}
-                      disabled={isRecoveryCompiling || !recoveryScript.trim()}
+                      disabled={isRecoveryCompiling || !recoveryScript.trim() || !!(currentTerminalStationId && activeLocks[currentTerminalStationId] && activeLocks[currentTerminalStationId].holder_id !== (getPlayerId() || ''))}
                       className={`px-5 py-2.5 font-bold rounded-lg border transition-all duration-200 select-none text-xs flex items-center gap-2 shrink-0 ${
-                        isRecoveryCompiling || !recoveryScript.trim()
+                        isRecoveryCompiling || !recoveryScript.trim() || !!(currentTerminalStationId && activeLocks[currentTerminalStationId] && activeLocks[currentTerminalStationId].holder_id !== (getPlayerId() || ''))
                           ? 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed'
                           : isBreakerTrip
                             ? 'bg-orange-950/60 hover:bg-orange-900/60 border-orange-500/80 hover:border-orange-400 text-orange-200 active:scale-95'
@@ -2868,7 +3128,24 @@ export default function SpaceBoard() {
             </div>
 
             {/* Main Body */}
-            <div className="flex-1 flex flex-col md:flex-row min-h-0">
+            <div className="flex-1 flex flex-col md:flex-row min-h-0 relative">
+              {/* Whiteboard Frosted read-only cover & warning banner */}
+              {activeLocks['station_whiteboard'] && activeLocks['station_whiteboard'].holder_id !== (getPlayerId() || '') && (
+                <div className="absolute inset-0 bg-slate-950/65 backdrop-blur-[2px] flex flex-col items-center justify-center text-center p-6 z-30 select-none">
+                  <div className="bg-amber-950/90 border border-amber-500/80 p-6 rounded-xl shadow-2xl max-w-md flex flex-col gap-3 animate-pulse">
+                    <span className="text-3xl">⚠️</span>
+                    <h4 className="font-bold text-amber-300 text-sm">协作白板正处于只读模式 (Read-Only)</h4>
+                    <p className="text-xs text-amber-400 leading-relaxed">
+                      该协作白板已被玩家 <span className="underline font-bold text-white">{activeLocks['station_whiteboard'].holder_id}</span> 独占锁定进行同业代码评审。请在物理地图中与其协作，或等待其离开。
+                    </p>
+                    {activeLocks['station_whiteboard'].remaining_ttl !== undefined && (
+                      <div className="text-[10px] text-amber-500 border border-amber-900/40 py-1 px-3 bg-slate-950/60 rounded self-center">
+                        锁定租约剩余时间: {activeLocks['station_whiteboard'].remaining_ttl.toFixed(1)}s
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
               {/* Left Column: Side Navigation Tabs (Pending Reviews, Active Quests) */}
               <div className="w-full md:w-80 border-b md:border-b-0 md:border-r border-slate-800/80 bg-slate-950/50 flex flex-col p-4 gap-4 overflow-y-auto shrink-0">
                 {/* Tabs selection header */}
@@ -3227,6 +3504,65 @@ export default function SpaceBoard() {
               <span className="text-[13px] font-bold leading-none">A</span>
               <span className="text-[8px] text-cyan-300 font-medium scale-75 mt-0.5">ACTION</span>
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Network Partition Double-Station Coordinated HUD */}
+      {activeAnomaly?.anomaly_id === 'network_partition' && (
+        <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-35 flex items-center gap-4 px-5 py-2.5 bg-slate-950/90 backdrop-blur-md border border-cyan-500/50 rounded-xl select-none shadow-2xl font-mono text-xs max-w-[95%] pointer-events-auto animate-bounce-slow">
+          <div className="flex items-center gap-2">
+            <span className="text-base animate-pulse">🌀</span>
+            <div>
+              <div className="text-[8px] font-bold text-slate-500 tracking-wider">CO-OP STATUS</div>
+              <div className="text-[10px] font-bold text-cyan-300">分布式双端协作网关 (Network Partition Active)</div>
+            </div>
+          </div>
+          
+          <div className="w-[1px] h-6 bg-slate-800" />
+          
+          {/* Station 1: Mainframe */}
+          <div className="flex items-center gap-1.5">
+            <span className={`w-1.5 h-1.5 rounded-full ${
+              partitionResolvedStations?.includes('station_mainframe') 
+                ? 'bg-emerald-400 shadow-[0_0_8px_#10b981]' 
+                : activeLocks['station_mainframe']
+                  ? 'bg-cyan-400 shadow-[0_0_8px_#22d3ee]'
+                  : 'bg-red-500 animate-pulse shadow-[0_0_8px_#ef4444]'
+            }`} />
+            <div className="flex flex-col">
+              <span className="text-[9px] text-slate-400">机房核心网关 (18, 15)</span>
+              <span className="text-[10px] font-bold">
+                {partitionResolvedStations?.includes('station_mainframe') 
+                  ? '✅ 已配置通过' 
+                  : activeLocks['station_mainframe'] 
+                    ? `🔌 ${activeLocks['station_mainframe'].holder_id.substring(0, 5)} 正在编译...` 
+                    : '🔒 未锁定 (需要解决)'}
+              </span>
+            </div>
+          </div>
+
+          <span className="text-slate-700 font-bold">&lt;══双端并联闭环══&gt;</span>
+
+          {/* Station 2: Sub-Node */}
+          <div className="flex items-center gap-1.5">
+            <span className={`w-1.5 h-1.5 rounded-full ${
+              partitionResolvedStations?.includes('station_dev_b') 
+                ? 'bg-emerald-400 shadow-[0_0_8px_#10b981]' 
+                : activeLocks['station_dev_b']
+                  ? 'bg-cyan-400 shadow-[0_0_8px_#22d3ee]'
+                  : 'bg-red-500 animate-pulse shadow-[0_0_8px_#ef4444]'
+            }`} />
+            <div className="flex flex-col">
+              <span className="text-[9px] text-slate-400">工位 B 备份网卡 (11, 17)</span>
+              <span className="text-[10px] font-bold">
+                {partitionResolvedStations?.includes('station_dev_b') 
+                  ? '✅ 已共识同步' 
+                  : activeLocks['station_dev_b'] 
+                    ? `🔌 ${activeLocks['station_dev_b'].holder_id.substring(0, 5)} 正在同步...` 
+                    : '🔒 未锁定 (需要解决)'}
+              </span>
+            </div>
           </div>
         </div>
       )}
