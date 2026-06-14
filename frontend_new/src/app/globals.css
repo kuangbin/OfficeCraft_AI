@@ -1378,4 +1378,112 @@ a {
   animation: console-shake 0.4s ease-in-out;
 }
 
+/* ========== 移动端复古虚拟手柄样式 (Mobile Virtual Gamepad) ========== */
+.pixel-gamepad-container {
+  pointer-events: none;
+  touch-action: none;
+  user-select: none;
+}
+
+.pixel-gamepad-btn {
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  background-color: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(8px);
+  border: 3px solid rgba(71, 85, 105, 0.8);
+  box-shadow: 
+    inset -3px -3px 0px 0px rgba(15, 23, 42, 0.9),
+    inset 3px 3px 0px 0px rgba(100, 116, 139, 0.5),
+    0 4px 10px rgba(0, 0, 0, 0.4);
+  transition: all 0.1s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: monospace;
+}
+
+.pixel-gamepad-btn:active {
+  transform: scale(0.9) translateY(2px);
+}
+
+.pixel-gamepad-btn-cyan {
+  border-color: rgba(6, 182, 212, 0.7);
+  box-shadow: 
+    inset -3px -3px 0px 0px rgba(15, 23, 42, 0.9),
+    inset 3px 3px 0px 0px rgba(34, 211, 238, 0.4),
+    0 0 15px rgba(6, 182, 212, 0.35);
+  color: #22d3ee;
+}
+
+.pixel-gamepad-btn-cyan:active {
+  background-color: rgba(6, 182, 212, 0.3);
+  box-shadow: 
+    inset 3px 3px 0px 0px rgba(15, 23, 42, 0.9),
+    inset -3px -3px 0px 0px rgba(34, 211, 238, 0.4),
+    0 0 25px rgba(6, 182, 212, 0.6);
+}
+
+.pixel-gamepad-btn-amber {
+  border-color: rgba(245, 158, 11, 0.7);
+  box-shadow: 
+    inset -3px -3px 0px 0px rgba(15, 23, 42, 0.9),
+    inset 3px 3px 0px 0px rgba(251, 191, 36, 0.4),
+    0 0 15px rgba(245, 158, 11, 0.35);
+  color: #fbbf24;
+}
+
+.pixel-gamepad-btn-amber:active {
+  background-color: rgba(245, 158, 11, 0.3);
+  box-shadow: 
+    inset 3px 3px 0px 0px rgba(15, 23, 42, 0.9),
+    inset -3px -3px 0px 0px rgba(251, 191, 36, 0.4),
+    0 0 25px rgba(245, 158, 11, 0.6);
+}
+
+.pixel-gamepad-btn-rose {
+  border-color: rgba(244, 63, 94, 0.7);
+  box-shadow: 
+    inset -3px -3px 0px 0px rgba(15, 23, 42, 0.9),
+    inset 3px 3px 0px 0px rgba(251, 113, 133, 0.4),
+    0 0 15px rgba(244, 63, 94, 0.35);
+  color: #fb7185;
+}
+
+.pixel-gamepad-btn-rose:active {
+  background-color: rgba(244, 63, 94, 0.3);
+  box-shadow: 
+    inset 3px 3px 0px 0px rgba(15, 23, 42, 0.9),
+    inset -3px -3px 0px 0px rgba(251, 113, 133, 0.4),
+    0 0 25px rgba(244, 63, 94, 0.6);
+}
+
+.pixel-gamepad-btn-violet {
+  border-color: rgba(139, 92, 246, 0.7);
+  box-shadow: 
+    inset -3px -3px 0px 0px rgba(15, 23, 42, 0.9),
+    inset 3px 3px 0px 0px rgba(167, 139, 250, 0.4),
+    0 0 15px rgba(139, 92, 246, 0.35);
+  color: #a78bfa;
+}
+
+.pixel-gamepad-btn-violet:active {
+  background-color: rgba(139, 92, 246, 0.3);
+  box-shadow: 
+    inset 3px 3px 0px 0px rgba(15, 23, 42, 0.9),
+    inset -3px -3px 0px 0px rgba(167, 139, 250, 0.4),
+    0 0 25px rgba(139, 92, 246, 0.6);
+}
+
+/* 适配移动端滑动遮罩 */
+.mobile-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(2, 6, 23, 0.6);
+  backdrop-filter: blur(4px);
+  z-index: 25;
+  transition: opacity 0.2s ease-in-out;
+}
+
+
 

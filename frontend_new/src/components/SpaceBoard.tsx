@@ -148,6 +148,11 @@ export default function SpaceBoard() {
   const [peerReviewTitle, setPeerReviewTitle] = useState('');
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
 
+  // Mobile Adaptations and Scaling states
+  const [mapScale, setMapScale] = useState<number>(1);
+  const [isMobile, setIsMobile] = useState<boolean>(false);
+  const touchIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
   // Unified overlay screen state: lobby | quests | portfolio | community | sandbox | skills | recovery | null
   const [activeOverlay, setActiveOverlay] = useState<'lobby' | 'quests' | 'portfolio' | 'community' | 'sandbox' | 'skills' | 'recovery' | null>(null);
 
@@ -334,6 +339,34 @@ export default function SpaceBoard() {
     };
   }, [connectWebSocket, disconnectWebSocket, syncFromBackend]);
 
+  // Handle viewport auto-scaling & touch/mobile detection
+  useEffect(() => {
+    const handleResize = () => {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      
+      const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+      setIsMobile(width < 1024 || hasTouch);
+
+      const minDim = Math.min(width - 32, height - 240);
+      let scale = minDim / 816;
+      
+      if (scale > 1.15) scale = 1.15;
+      if (scale < 0.35) scale = 0.35;
+      
+      setMapScale(scale);
+    };
+
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      if (touchIntervalRef.current) {
+        clearInterval(touchIntervalRef.current);
+      }
+    };
+  }, []);
+
   // Fetch career-specific quests and skills when career changes
   useEffect(() => {
     if (currentCareerId) {
@@ -464,6 +497,91 @@ export default function SpaceBoard() {
     fetchPendingReviews();
     setAmbientTheme('quiet-blue');
   }, [fetchPendingReviews, setCoopWhiteboardOpen, setAmbientTheme]);
+
+  // NPCs Chat conversation
+  const startConversation = useCallback((npc: typeof NPC_INFO.mentor_ling) => {
+    setActiveChatNpc(npc);
+    audioManager.playOpen();
+    setChatMessages([{ role: 'npc', content: npc.greeting }]);
+    setChatInput('');
+  }, [setActiveChatNpc, setChatMessages, setChatInput]);
+
+  const closeConversation = useCallback(() => {
+    setActiveChatNpc(null);
+    audioManager.playClose();
+    setChatMessages([]);
+  }, [setActiveChatNpc, setChatMessages]);
+
+  // Mobile touch and virtual gamepad event handlers
+  const handleTouchMoveStart = useCallback((dx: number, dy: number) => {
+    if (touchIntervalRef.current) {
+      clearInterval(touchIntervalRef.current);
+    }
+    
+    movePlayer(dx, dy).catch(() => undefined);
+    
+    touchIntervalRef.current = setInterval(() => {
+      movePlayer(dx, dy).catch(() => undefined);
+    }, 120);
+  }, [movePlayer]);
+
+  const handleTouchMoveEnd = useCallback(() => {
+    if (touchIntervalRef.current) {
+      clearInterval(touchIntervalRef.current);
+      touchIntervalRef.current = null;
+    }
+  }, []);
+
+  const handleTouchInteract = useCallback(() => {
+    if (isAdjacentToTable) {
+      startTeamMeetingModal().catch(() => undefined);
+      return;
+    }
+    if (isNearLobbyDesk) {
+      openOverlay('lobby');
+      return;
+    }
+    if (isNearDevWorkstation) {
+      openOverlay('quests');
+      return;
+    }
+    if (isNearArchiveBookshelf) {
+      setSelectedBookcase(BOOKCASES.pandas_library);
+      audioManager.playOpen();
+      return;
+    }
+    if (isNearSkillTerminal) {
+      if (activeAnomaly) {
+        openOverlay('recovery');
+      } else {
+        openOverlay('skills');
+      }
+      return;
+    }
+    if (isNearCoopWhiteboard) {
+      openCoopWhiteboard();
+      return;
+    }
+    if (interactiveNpcId) {
+      const npc = NPC_INFO[interactiveNpcId as keyof typeof NPC_INFO];
+      if (npc) {
+        startConversation(npc);
+      }
+      return;
+    }
+  }, [
+    isAdjacentToTable,
+    isNearLobbyDesk,
+    isNearDevWorkstation,
+    isNearArchiveBookshelf,
+    isNearSkillTerminal,
+    isNearCoopWhiteboard,
+    interactiveNpcId,
+    activeAnomaly,
+    startConversation,
+    openCoopWhiteboard,
+    openOverlay
+  ]);
 
   // Handle Keyboard Inputs
   useEffect(() => {
@@ -626,19 +744,7 @@ export default function SpaceBoard() {
     }
   };
 
-  // NPCs Chat conversation
-  const startConversation = (npc: typeof NPC_INFO.mentor_ling) => {
-    setActiveChatNpc(npc);
-    audioManager.playOpen();
-    setChatMessages([{ role: 'npc', content: npc.greeting }]);
-    setChatInput('');
-  };
 
-  const closeConversation = () => {
-    setActiveChatNpc(null);
-    audioManager.playClose();
-    setChatMessages([]);
-  };
 
   const handleSendChatMessage = async () => {
     if (!chatInput.trim() || !activeChatNpc || isNpcStreaming) return;
@@ -938,39 +1044,35 @@ export default function SpaceBoard() {
       {/* ================== FLOATING HUD PANELS ================== */}
 
       {/* 1. TOP MENU CAPSULE */}
-      <div className="fixed top-3 left-1/2 -translate-x-1/2 z-30 flex flex-wrap items-center gap-4 md:gap-6 px-6 py-2.5 glass-cockpit rounded-full select-none shadow-2xl transition-all duration-300 pointer-events-auto">
-        <div className="flex items-center gap-2">
-          <span className="text-xl animate-pulse">🕹️</span>
-          <div>
-            <span className="text-[10px] font-bold text-slate-500 tracking-wider">OFFICECRAFT AI CONSOLE</span>
-            <div className="flex items-center gap-1.5 leading-none">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-              <span className="text-[9px] text-emerald-400 font-bold uppercase font-mono">Cockpit OK</span>
-            </div>
+      <div className="fixed top-3 left-1/2 -translate-x-1/2 z-30 flex flex-wrap items-center justify-center gap-2.5 md:gap-6 px-4 md:px-6 py-2 glass-cockpit rounded-full select-none shadow-2xl transition-all duration-300 pointer-events-auto max-w-[95%]">
+        <div className="flex items-center gap-1.5">
+          <span className="text-sm md:text-xl animate-pulse">🕹️</span>
+          <div className="hidden sm:block">
+            <span className="text-[8px] md:text-[10px] font-bold text-slate-500 tracking-wider">OFFICECRAFT AI</span>
           </div>
         </div>
 
-        <div className="w-[1px] h-6 bg-slate-800" />
+        <div className="hidden md:block w-[1px] h-6 bg-slate-800" />
 
         {/* Global User status badge */}
-        <div className="flex gap-4 font-mono text-xs">
-          <div>
-            <div className="text-[8px] text-slate-500 uppercase leading-none">Career Path</div>
-            <div className="text-xs font-bold text-amber-300 leading-tight">
-              {currentCareerId ? (currentCareerId === 'data-analyst' ? '数据分析师' : '初级软件工程师') : '尚未选择职业'}
+        <div className="flex gap-2.5 md:gap-4 font-mono text-xs">
+          <div className="hidden sm:block">
+            <div className="text-[8px] text-slate-500 uppercase leading-none">Career</div>
+            <div className="text-[10px] md:text-xs font-bold text-amber-300 leading-tight">
+              {currentCareerId ? (currentCareerId === 'data-analyst' ? '数据' : '开发') : '未选'}
             </div>
           </div>
           <div>
-            <div className="text-[8px] text-slate-500 uppercase leading-none">Growth XP</div>
-            <div className="text-xs font-bold text-cyan-400 leading-tight">{totalXp} XP</div>
+            <div className="text-[8px] text-slate-500 uppercase leading-none">XP</div>
+            <div className="text-[10px] md:text-xs font-bold text-cyan-400 leading-tight">{totalXp}</div>
           </div>
           <div>
             <div className="text-[8px] text-slate-500 uppercase leading-none">Rank</div>
-            <div className="text-xs font-bold text-purple-400 leading-tight">Lvl {Math.floor(totalXp / 100) + 1}</div>
+            <div className="text-[10px] md:text-xs font-bold text-purple-400 leading-tight">Lvl {Math.floor(totalXp / 100) + 1}</div>
           </div>
         </div>
 
-        <div className="w-[1px] h-6 bg-slate-800" />
+        <div className="hidden md:block w-[1px] h-6 bg-slate-800" />
 
         {/* Trigger Outage Debug Button */}
         <button
@@ -982,27 +1084,27 @@ export default function SpaceBoard() {
             }
           }}
           disabled={!!activeAnomaly}
-          className={`px-3.5 py-1 font-mono text-[9px] font-bold rounded-full border transition-all duration-200 ${
+          className={`px-2.5 py-0.5 md:px-3.5 md:py-1 font-mono text-[8px] md:text-[9px] font-bold rounded-full border transition-all duration-200 ${
             activeAnomaly
               ? 'bg-red-950/60 border-red-700/80 text-red-400 cursor-not-allowed animate-pulse'
               : 'bg-amber-950/45 hover:bg-amber-900/60 border-amber-700/60 text-amber-300 active:scale-95'
           }`}
           title="点击模拟核心数据库 CPU 100% 满载故障"
         >
-          {activeAnomaly ? '🚨 故障恢复中' : '⚠️ 模拟数据库故障'}
+          {activeAnomaly ? '🚨 故障中' : '⚠️ 模拟故障'}
         </button>
 
-        <div className="w-[1px] h-6 bg-slate-800" />
+        <div className="hidden md:block w-[1px] h-6 bg-slate-800" />
 
         {/* Location coordinate & volume controls */}
-        <div className="flex items-center gap-4 text-xs font-mono">
-          <div className="flex items-center gap-1 bg-slate-950/60 px-2.5 py-1 border border-slate-800/80 rounded">
-            <span className="text-[10px] text-slate-400">COORDS:</span>
-            <span className="font-bold text-cyan-300">({playerCoords.x}, {playerCoords.y})</span>
+        <div className="flex items-center gap-2 md:gap-4 text-xs font-mono">
+          <div className="flex items-center gap-1 bg-slate-950/60 px-1.5 py-0.5 md:px-2.5 md:py-1 border border-slate-800/80 rounded">
+            <span className="text-[8px] md:text-[10px] text-slate-400">POS:</span>
+            <span className="font-bold text-cyan-300 text-[10px] md:text-xs">({playerCoords.x},{playerCoords.y})</span>
           </div>
 
-          <div className="flex items-center gap-2 bg-slate-950/60 px-3 py-1 border border-slate-800/80 rounded">
-            <button onClick={toggleMute} className="text-sm select-none hover:scale-110 focus:outline-none">
+          <div className="flex items-center gap-1 bg-slate-950/60 px-2 py-0.5 md:px-3 md:py-1 border border-slate-800/80 rounded">
+            <button onClick={toggleMute} className="text-xs md:text-sm select-none hover:scale-110 focus:outline-none">
               {isMuted ? '🔇' : '🔊'}
             </button>
             <input
@@ -1012,7 +1114,7 @@ export default function SpaceBoard() {
               step="0.1"
               value={volume}
               onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
-              className="w-14 h-1 rounded bg-slate-800 accent-indigo-500 cursor-pointer border border-slate-700 outline-none"
+              className="hidden md:block w-14 h-1 rounded bg-slate-800 accent-indigo-500 cursor-pointer border border-slate-700 outline-none"
             />
           </div>
         </div>
@@ -1043,8 +1145,19 @@ export default function SpaceBoard() {
         </div>
       )}
 
+      {/* Mobile background backdrop mask when Left panel is open */}
+      {isMobile && isLeftPanelOpen && (
+        <div 
+          className="mobile-drawer-overlay" 
+          onClick={() => {
+            setIsLeftPanelOpen(false);
+            audioManager.playClose();
+          }} 
+        />
+      )}
+
       {/* 2. LEFT COCKPIT DECK (COLLAPSIBLE) */}
-      <div className={`fixed top-20 bottom-4 w-[285px] z-30 flex flex-col gap-4 p-4 glass-cockpit overflow-y-auto pointer-events-auto rounded-xl shadow-2xl select-none transition-all duration-300 ${
+      <div className={`fixed top-20 bottom-4 w-[285px] max-w-[85vw] z-50 md:z-30 flex flex-col gap-4 p-4 glass-cockpit overflow-y-auto pointer-events-auto rounded-xl shadow-2xl select-none transition-all duration-300 ${
         isLeftPanelOpen ? 'left-4 opacity-100 translate-x-0' : '-left-80 opacity-0 -translate-x-full pointer-events-none'
       }`}>
         <div className="border-b border-slate-800/80 pb-2 flex justify-between items-center">
@@ -1206,8 +1319,10 @@ export default function SpaceBoard() {
 
       {/* ================== GLASSMORPHIC SPATIAL CHAT HUD ================== */}
       <div 
-        className={`fixed bottom-6 z-40 w-[320px] transition-all duration-300 font-mono select-none ${
-          isLeftPanelOpen ? 'left-[315px]' : 'left-6'
+        className={`fixed bottom-6 z-40 w-[92vw] max-w-[320px] transition-all duration-300 font-mono select-none ${
+          isMobile 
+            ? 'left-1/2 -translate-x-1/2 bottom-[140px]' 
+            : isLeftPanelOpen ? 'left-[315px]' : 'left-6'
         }`}
       >
         <div className="bg-slate-950/85 backdrop-blur-md border border-slate-800/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col pointer-events-auto">
@@ -1352,7 +1467,7 @@ export default function SpaceBoard() {
 
       {/* ================== CENTRAL 2D MAP GRID PANEL ================== */}
       <div className="w-full h-full flex-1 flex items-center justify-center relative overflow-hidden">
-        <div className="transform scale-[0.85] sm:scale-[0.95] md:scale-100 lg:scale-[1.05] xl:scale-[1.1] 2xl:scale-[1.15] origin-center transition-all duration-300 select-none">
+        <div className="origin-center transition-all duration-300 select-none" style={{ transform: `scale(${mapScale})` }}>
           
           {/* Main RPG grid container */}
           <div className="relative w-[816px] h-[816px] border-8 border-slate-800 bg-slate-950 p-1 overflow-hidden shadow-2xl crt-screen">
@@ -1761,14 +1876,14 @@ export default function SpaceBoard() {
 
       {/* 1. LOBBY OVERLAY */}
       {activeOverlay === 'lobby' && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-40 flex items-center justify-center p-4 select-none">
-          <div className="w-full max-w-5xl bg-slate-900 border-4 border-amber-500 shadow-2xl p-6 rounded-lg relative flex flex-col md:flex-row gap-6 animate-slide-in-up">
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-45 flex items-center justify-center p-2 sm:p-4 select-none">
+          <div className="w-full max-w-5xl max-h-[92vh] overflow-y-auto bg-slate-900 border-4 border-amber-500 shadow-2xl p-4 md:p-6 rounded-lg relative flex flex-col md:flex-row gap-6 animate-slide-in-up">
             <button onClick={closeOverlay} className="absolute top-4 right-4 text-slate-500 hover:text-slate-300 text-sm font-mono">[关闭 Esc]</button>
             
             <div className="flex-1">
               <div className="mb-4">
                 <PixelBadge variant="warning">LOBBY WORLD MAP</PixelBadge>
-                <h3 className="pixel-title text-xl text-amber-300 font-bold mt-1">请绑定并进入你的第一条职业大陆</h3>
+                <h3 className="pixel-title text-base md:text-xl text-amber-300 font-bold mt-1">请绑定并进入你的第一条职业大陆</h3>
               </div>
               <CareerWorldMap onIslandSelect={setSelectedIsland} careerOverrides={careerOverrides} />
             </div>
@@ -1798,8 +1913,8 @@ export default function SpaceBoard() {
 
       {/* 2. QUEST BOARD OVERLAY */}
       {activeOverlay === 'quests' && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-40 flex items-center justify-center p-4 select-none">
-          <div className="w-full max-w-4xl bg-slate-900 border-4 border-indigo-500 shadow-2xl p-6 rounded-lg relative flex flex-col gap-4 animate-slide-in-up">
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-45 flex items-center justify-center p-2 sm:p-4 select-none">
+          <div className="w-full max-w-4xl max-h-[92vh] overflow-y-auto bg-slate-900 border-4 border-indigo-500 shadow-2xl p-4 md:p-6 rounded-lg relative flex flex-col gap-4 animate-slide-in-up">
             <button onClick={closeOverlay} className="absolute top-4 right-4 text-slate-500 hover:text-slate-300 text-sm font-mono">[关闭 Esc]</button>
             
             <div className="border-b-4 border-indigo-950 pb-3">
@@ -1858,13 +1973,13 @@ export default function SpaceBoard() {
 
       {/* 3. PORTFOLIO OVERLAY */}
       {activeOverlay === 'portfolio' && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-40 flex items-center justify-center p-4 select-none">
-          <div className="w-full max-w-4xl bg-slate-900 border-4 border-purple-500 shadow-2xl p-6 rounded-lg relative flex flex-col gap-6 animate-slide-in-up">
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-45 flex items-center justify-center p-2 sm:p-4 select-none">
+          <div className="w-full max-w-4xl max-h-[92vh] overflow-y-auto bg-slate-900 border-4 border-purple-500 shadow-2xl p-4 md:p-6 rounded-lg relative flex flex-col gap-6 animate-slide-in-up">
             <button onClick={closeOverlay} className="absolute top-4 right-4 text-slate-500 hover:text-slate-300 text-sm font-mono">[关闭 Esc]</button>
             
             <div className="border-b-4 border-purple-950 pb-3">
               <PixelBadge variant="warning">GROWTH PORTFOLIO</PixelBadge>
-              <h3 className="pixel-title text-xl text-slate-100 font-bold mt-1">初学者个人成长档案馆</h3>
+              <h3 className="pixel-title text-base md:text-xl text-slate-100 font-bold mt-1">初学者个人成长档案馆</h3>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 font-mono">
@@ -1881,7 +1996,7 @@ export default function SpaceBoard() {
                 </div>
               </div>
 
-              <div className="col-span-2 bg-slate-950 p-5 border-2 border-purple-900/40 rounded flex flex-col justify-between">
+              <div className="col-span-2 bg-slate-950 p-4 md:p-5 border-2 border-purple-900/40 rounded flex flex-col justify-between">
                 <div>
                   <h4 className="font-bold text-purple-400 text-sm mb-3">🏅 实训里程碑证据墙</h4>
                   <div className="divide-y divide-slate-900">
@@ -1907,8 +2022,8 @@ export default function SpaceBoard() {
 
       {/* 4. COMMUNITY WHITEBOARD OVERLAY */}
       {activeOverlay === 'community' && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-40 flex items-center justify-center p-4 select-none">
-          <div className="w-full max-w-5xl bg-slate-900 border-4 border-emerald-500 shadow-2xl p-6 rounded-lg relative flex flex-col gap-4 animate-slide-in-up">
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-45 flex items-center justify-center p-2 sm:p-4 select-none">
+          <div className="w-full max-w-5xl max-h-[92vh] overflow-y-auto bg-slate-900 border-4 border-emerald-500 shadow-2xl p-4 md:p-6 rounded-lg relative flex flex-col gap-4 animate-slide-in-up">
             <button onClick={closeOverlay} className="absolute top-4 right-4 text-slate-500 hover:text-slate-300 text-sm font-mono">[关闭 Esc]</button>
             
             <div className="border-b-4 border-emerald-950 pb-3 flex justify-between items-center">
@@ -1958,7 +2073,7 @@ export default function SpaceBoard() {
 
       {/* 5. CODE SANDBOX WORKSPACE (SLIDE-OUT DRAWER) */}
       {activeOverlay === 'sandbox' && localActiveMission && (
-        <div className="fixed top-20 right-4 bottom-4 w-[740px] bg-slate-950/95 border-2 border-cyan-500 rounded-xl shadow-2xl z-40 p-5 flex flex-col gap-4 animate-slide-in-right pointer-events-auto select-none">
+        <div className="fixed top-16 md:top-20 left-4 md:left-auto right-4 bottom-4 w-auto md:w-[740px] max-h-[92vh] md:max-h-none overflow-y-auto md:overflow-visible bg-slate-950/95 border-2 border-cyan-500 rounded-xl shadow-2xl z-40 p-4 md:p-5 flex flex-col gap-4 animate-slide-in-right pointer-events-auto select-none">
           <div className="flex justify-between items-center border-b border-slate-800 pb-3">
             <div className="flex items-center gap-2">
               <span className="text-xl animate-spin">⚙️</span>
@@ -1970,9 +2085,9 @@ export default function SpaceBoard() {
             <button onClick={closeOverlay} className="text-slate-500 hover:text-slate-300 text-xs font-mono">[关闭 Esc]</button>
           </div>
 
-          <div className="grid grid-cols-2 gap-4 flex-1 min-h-0 font-mono">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1 min-h-0 font-mono">
             {/* Left Col: Instructions & handbook */}
-            <div className="flex flex-col gap-3 overflow-y-auto pr-1">
+            <div className="flex flex-col gap-3 md:overflow-y-auto pr-1">
               <div className="bg-slate-900/50 p-4 border border-slate-800/60 rounded">
                 <span className="text-[10px] text-slate-500 uppercase tracking-widest">Quest Overview</span>
                 <h4 className="font-bold text-amber-300 text-xs mt-1">{localActiveMission.title}</h4>
@@ -1999,8 +2114,8 @@ export default function SpaceBoard() {
             </div>
 
             {/* Right Col: Code Editor & Terminal */}
-            <div className="flex flex-col gap-3 min-h-0">
-              <div className="flex-1 flex flex-col border border-slate-800 rounded bg-slate-900/40 relative">
+            <div className="flex flex-col gap-3 min-h-[350px] md:min-h-0">
+              <div className="flex-1 flex flex-col border border-slate-800 rounded bg-slate-900/40 relative min-h-[180px] md:min-h-0">
                 <div className="absolute top-2 right-4 text-[9px] text-slate-500">EDITOR.PY</div>
                 <textarea
                   value={sandboxCode}
@@ -2121,7 +2236,7 @@ export default function SpaceBoard() {
       {/* 6. SKILL MATRIX OVERLAY (FULL SCREEN GLASSMORPHIC DIALOG) */}
       {activeOverlay === 'skills' && (
         <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md flex items-center justify-center z-50 p-4 font-mono select-none animate-fade-in pointer-events-auto">
-          <div className="w-full max-w-5xl h-[85vh] bg-slate-950/90 border-4 border-cyan-500 shadow-[0_0_30px_rgba(6,182,212,0.3)] p-6 relative flex flex-col gap-4 rounded-xl">
+          <div className="w-full max-w-5xl h-[90vh] md:h-[85vh] bg-slate-950/90 border-4 border-cyan-500 shadow-[0_0_30px_rgba(6,182,212,0.3)] p-4 md:p-6 relative flex flex-col gap-4 rounded-xl">
             {/* Header */}
             <div className="border-b-2 border-cyan-950 pb-3 flex justify-between items-center">
               <div className="flex items-center gap-3">
@@ -2148,8 +2263,8 @@ export default function SpaceBoard() {
             </div>
             
             {/* Legend / Status bar */}
-            <div className="flex justify-between items-center bg-slate-900/50 p-3 border border-slate-800/60 rounded text-[11px] text-slate-400">
-              <div className="flex items-center gap-4">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-slate-900/50 p-3 border border-slate-800/60 rounded text-[11px] text-slate-400">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
                 <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_6px_rgba(6,182,212,0.5)]" /> 已点亮</span>
                 <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-indigo-500/50 border border-indigo-400/40" /> 已解锁(待点亮)</span>
                 <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-slate-800 border border-slate-700" /> 未解锁</span>
@@ -2166,8 +2281,8 @@ export default function SpaceBoard() {
       {activeOverlay === 'recovery' && (() => {
         const isBreakerTrip = activeAnomaly?.anomaly_id === 'service_breaker_trip' || terminalOutput.some(log => log.includes('Microservice B') || log.includes('熔断器'));
         return (
-          <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md flex items-center justify-center z-50 p-4 font-mono select-none animate-fade-in pointer-events-auto">
-            <div className={`w-full max-w-4xl h-[85vh] bg-slate-950/90 border-4 relative flex flex-col gap-4 rounded-xl ${
+          <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md flex items-center justify-center z-50 p-2 sm:p-4 font-mono select-none animate-fade-in pointer-events-auto">
+            <div className={`w-full max-w-4xl h-[90vh] md:h-[85vh] bg-slate-950/90 border-4 relative flex flex-col gap-4 rounded-xl max-h-[92vh] overflow-y-auto md:overflow-visible ${
               isConsoleShaking ? 'console-screen-shake' : ''
             } ${
               isBreakerTrip 
@@ -2340,8 +2455,8 @@ export default function SpaceBoard() {
                 </div>
 
                 {/* Right Column: Editor & Sandbox Submit */}
-                <div className="flex-1 flex flex-col gap-3 min-h-0">
-                  <div className="flex-1 flex flex-col bg-slate-950/85 border border-slate-900 rounded-lg overflow-hidden relative min-h-0">
+                <div className="flex-1 flex flex-col gap-3 min-h-[350px] md:min-h-0">
+                  <div className="flex-1 flex flex-col bg-slate-950/85 border border-slate-900 rounded-lg overflow-hidden relative min-h-[180px] md:min-h-0">
                     {/* Editor Header */}
                     <div className={`bg-slate-950/90 border-b border-slate-900 px-4 py-2 flex justify-between items-center text-xs ${
                       isBreakerTrip ? 'text-orange-400' : 'text-slate-400'
@@ -2379,7 +2494,7 @@ export default function SpaceBoard() {
                   </div>
 
                   {/* Footer Controls */}
-                  <div className="flex justify-between items-center gap-4 bg-slate-900/20 p-3 border border-slate-900 rounded-lg shrink-0">
+                  <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 bg-slate-900/20 p-3 border border-slate-900 rounded-lg shrink-0">
                     <div className="text-[10px] text-slate-500 leading-snug flex-1">
                       {isBreakerTrip ? (
                         <>
@@ -2747,7 +2862,7 @@ export default function SpaceBoard() {
       {/* 8. CO-OP WHITEBOARD & PEER REVIEW OVERLAY */}
       {isCoopWhiteboardOpen && (
         <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-40 flex items-center justify-center p-4">
-          <div className="w-full max-w-5xl h-[650px] bg-slate-900 border-2 border-violet-500 rounded-xl shadow-[0_0_50px_rgba(139,92,246,0.35)] flex flex-col overflow-hidden font-mono select-none animate-slide-in-up pointer-events-auto">
+          <div className="w-full max-w-5xl h-[90vh] md:h-[650px] bg-slate-900 border-2 border-violet-500 rounded-xl shadow-[0_0_50px_rgba(139,92,246,0.35)] flex flex-col overflow-y-auto md:overflow-hidden font-mono select-none animate-slide-in-up pointer-events-auto">
             {/* Header */}
             <div className="bg-slate-950 px-6 py-4 flex justify-between items-center border-b border-violet-950">
               <div className="flex items-center gap-3">
@@ -2766,9 +2881,9 @@ export default function SpaceBoard() {
             </div>
 
             {/* Main Body */}
-            <div className="flex-1 flex min-h-0">
+            <div className="flex-1 flex flex-col md:flex-row min-h-0">
               {/* Left Column: Side Navigation Tabs (Pending Reviews, Active Quests) */}
-              <div className="w-80 border-r border-slate-800/80 bg-slate-950/50 flex flex-col p-4 gap-4 overflow-y-auto">
+              <div className="w-full md:w-80 border-b md:border-b-0 md:border-r border-slate-800/80 bg-slate-950/50 flex flex-col p-4 gap-4 overflow-y-auto shrink-0">
                 {/* Tabs selection header */}
                 <div className="flex bg-slate-950 p-1 border border-slate-800 rounded-md">
                   <button 
@@ -2896,7 +3011,7 @@ export default function SpaceBoard() {
               </div>
 
               {/* Right Pane: Green-Screen CRT Code Viewer & Feedback Terminal */}
-              <div className="flex-1 bg-slate-950 flex flex-col relative overflow-hidden p-6 gap-4">
+              <div className="flex-1 bg-slate-950 flex flex-col relative overflow-hidden p-4 md:p-6 gap-4 min-h-[400px] md:min-h-0">
                 <div className="absolute inset-0 bg-scanlines opacity-[0.03] pointer-events-none" />
                 
                 {selectedReview ? (
@@ -2928,7 +3043,7 @@ export default function SpaceBoard() {
                     </div>
 
                     {/* Fenced scrollable code review panel */}
-                    <div className="flex-1 border border-emerald-950/60 rounded bg-slate-950 relative flex flex-col min-h-0">
+                    <div className="flex-1 border border-emerald-950/60 rounded bg-slate-950 relative flex flex-col min-h-[150px] md:min-h-0">
                       <div className="absolute top-2 right-4 text-[9px] font-bold text-emerald-600 tracking-wider">VIEWPORT</div>
                       <div className="p-4 overflow-y-auto flex-1 font-mono text-xs text-emerald-400/90 leading-relaxed select-text whitespace-pre text-left bg-[rgba(6,20,12,0.15)] glow-green-text">
                         {selectedReview.code_content}
@@ -3018,6 +3133,113 @@ export default function SpaceBoard() {
                 )}
               </div>
             </div>
+          </div>
+        </div>
+      )}
+      {/* 9. VIRTUAL RETRO GAMEPAD FOR MOBILE DEVICES */}
+      {isMobile && !activeOverlay && !isCoopWhiteboardOpen && !activeChatNpc && (
+        <div className="fixed inset-x-0 bottom-4 z-40 flex justify-between items-end px-4 py-2 pointer-events-none select-none pixel-gamepad-container">
+          {/* Left Side: Retro Virtual D-Pad */}
+          <div className="flex items-center justify-center bg-slate-950/40 p-1.5 rounded-3xl border border-slate-800/20 pointer-events-auto backdrop-blur-[4px] shadow-xl">
+            <div className="relative w-28 h-28 flex items-center justify-center">
+              {/* Center Core */}
+              <div className="w-8 h-8 bg-slate-950 border border-slate-800 rounded-full flex items-center justify-center text-[10px] text-slate-600 font-bold z-10 shadow-inner">
+                🕹️
+              </div>
+              
+              {/* Up button */}
+              <button
+                onTouchStart={() => handleTouchMoveStart(0, -1)}
+                onTouchEnd={handleTouchMoveEnd}
+                onMouseDown={() => handleTouchMoveStart(0, -1)}
+                onMouseUp={handleTouchMoveEnd}
+                className="pixel-gamepad-btn absolute top-0 w-9 h-9 border rounded-md text-sm font-bold shadow-md"
+                title="Move Up"
+              >
+                ▲
+              </button>
+
+              {/* Down button */}
+              <button
+                onTouchStart={() => handleTouchMoveStart(0, 1)}
+                onTouchEnd={handleTouchMoveEnd}
+                onMouseDown={() => handleTouchMoveStart(0, 1)}
+                onMouseUp={handleTouchMoveEnd}
+                className="pixel-gamepad-btn absolute bottom-0 w-9 h-9 border rounded-md text-sm font-bold shadow-md"
+                title="Move Down"
+              >
+                ▼
+              </button>
+
+              {/* Left button */}
+              <button
+                onTouchStart={() => handleTouchMoveStart(-1, 0)}
+                onTouchEnd={handleTouchMoveEnd}
+                onMouseDown={() => handleTouchMoveStart(-1, 0)}
+                onMouseUp={handleTouchMoveEnd}
+                className="pixel-gamepad-btn absolute left-0 w-9 h-9 border rounded-md text-sm font-bold shadow-md"
+                title="Move Left"
+              >
+                ◀
+              </button>
+
+              {/* Right button */}
+              <button
+                onTouchStart={() => handleTouchMoveStart(1, 0)}
+                onTouchEnd={handleTouchMoveEnd}
+                onMouseDown={() => handleTouchMoveStart(1, 0)}
+                onMouseUp={handleTouchMoveEnd}
+                className="pixel-gamepad-btn absolute right-0 w-9 h-9 border rounded-md text-sm font-bold shadow-md"
+                title="Move Right"
+              >
+                ▶
+              </button>
+            </div>
+          </div>
+
+          {/* Right Side: Retro Action Buttons (A, B, T) */}
+          <div className="flex gap-3.5 items-center bg-slate-950/40 px-3.5 py-2.5 rounded-3xl border border-slate-800/20 pointer-events-auto backdrop-blur-[4px] shadow-xl">
+            {/* T Button: Chat Focus */}
+            <button
+              onClick={() => {
+                spatialChatInputRef.current?.focus();
+                audioManager.playOpen();
+              }}
+              className="pixel-gamepad-btn pixel-gamepad-btn-violet w-12 h-12 rounded-full flex flex-col items-center justify-center font-mono"
+            >
+              <span className="text-[11px] font-bold leading-none">T</span>
+              <span className="text-[7.5px] text-violet-400 font-medium scale-75 mt-0.5">CHAT</span>
+            </button>
+
+            {/* B Button: Close / Escape */}
+            <button
+              onClick={() => {
+                if (activeOverlay) {
+                  closeOverlay();
+                } else if (isCoopWhiteboardOpen) {
+                  closeCoopWhiteboard();
+                } else if (activeChatNpc) {
+                  closeConversation();
+                }
+                audioManager.playClose();
+              }}
+              className="pixel-gamepad-btn pixel-gamepad-btn-rose w-12 h-12 rounded-full flex flex-col items-center justify-center font-mono"
+            >
+              <span className="text-[11px] font-bold leading-none">B</span>
+              <span className="text-[7.5px] text-rose-400 font-medium scale-75 mt-0.5">BACK</span>
+            </button>
+
+            {/* A Button: Interaction / Confirm */}
+            <button
+              onClick={() => {
+                handleTouchInteract();
+                audioManager.playOpen();
+              }}
+              className="pixel-gamepad-btn pixel-gamepad-btn-cyan w-14 h-14 rounded-full flex flex-col items-center justify-center font-mono"
+            >
+              <span className="text-[13px] font-bold leading-none">A</span>
+              <span className="text-[8px] text-cyan-300 font-medium scale-75 mt-0.5">ACTION</span>
+            </button>
           </div>
         </div>
       )}
